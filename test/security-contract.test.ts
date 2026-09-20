@@ -77,6 +77,11 @@ describe("publication safety contract", () => {
     expect(worker.indexOf('consumeMutationRateLimit(c, "selection")')).toBeLessThan(worker.indexOf("const s = await csrf(c)"));
     expect(worker.indexOf('consumeMutationRateLimit(c, "consent_withdrawal")')).toBeLessThan(worker.lastIndexOf("const s = await csrf(c)"));
   });
+  it("advances the bounded sync cursor before fenced partial progress is persisted", () => {
+    const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
+    expect(worker).toContain("cursor = result.cursor;");
+    expect(worker).toContain("complete ? null : cursor");
+  });
   it("persists only the minimal approved PR fields", () => {
     const migration = readFileSync(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8");
     expect(migration).toMatch(/pr_id TEXT PRIMARY KEY/);
