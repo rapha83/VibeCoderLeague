@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { eligibleRepo, GitHubClient, prohibitedGitHubAccess } from "../src/github";
 import { utcMonth, validMonth } from "../src/worker";
 
+const readRepositoryFile = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+
 describe("GitHub boundary", () => {
   it("uses only repository metadata, installation repository enumeration, and allowlisted GraphQL fields", async () => {
     const calls: Array<{ url: string; body?: string }> = [];
@@ -29,6 +31,26 @@ describe("GitHub boundary", () => {
   });
 });
 
+describe("activation configuration", () => {
+  it("explicitly enables the Free-plan workers.dev initial deployment path", () => {
+    const wrangler = readRepositoryFile("../wrangler.toml");
+    expect(wrangler).toMatch(/^workers_dev\s*=\s*true\s*$/m);
+    expect(wrangler).not.toMatch(/^workers_dev\s*=\s*false\s*$/m);
+  });
+  it("uses GitHub App user authorization credentials, not a separate broad OAuth App", () => {
+    const worker = readRepositoryFile("../src/worker.ts");
+    const appSetup = readRepositoryFile("../docs/github-app.md");
+    expect(worker).toContain("https://github.com/login/oauth/authorize");
+    expect(worker).toContain("https://github.com/login/oauth/access_token");
+    expect(worker).toContain("GITHUB_APP_CLIENT_ID");
+    expect(worker).toContain("GITHUB_APP_CLIENT_SECRET");
+    expect(worker).not.toContain("scope=repo");
+    expect(appSetup).toContain("GitHub App's user authorization web flow");
+    expect(appSetup).toContain("Do not create or use a separate OAuth App");
+    expect(appSetup).toContain("no broad `repo` scope is requested");
+  });
+});
+
 describe("publication safety contract", () => {
   it("uses strict UTC month boundaries", () => {
     expect(utcMonth("2025-01-31T23:59:59.999Z")).toBe("2025-01");
@@ -38,7 +60,7 @@ describe("publication safety contract", () => {
     expect(validMonth("2025-13")).toBe(false);
   });
   it("makes withdrawal and sync upserts fail closed on consent/repository visibility", () => {
-    const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
+    const worker = readRepositoryFile("../src/worker.ts");
     expect(worker).toContain("DELETE FROM pull_requests WHERE author_id=?");
     expect(worker).toContain("p.consent_active=1");
     expect(worker).toContain("c.active=1 AND c.visibility='public'");
@@ -46,7 +68,7 @@ describe("publication safety contract", () => {
     expect(worker).toContain("visibility='unknown'");
   });
   it("retries active unknown visibility and restores public only through the current lease before PR writes", () => {
-    const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
+    const worker = readRepositoryFile("../src/worker.ts");
     const scheduledQuery = "FROM consents WHERE active=1 AND visibility IN ('public','unknown')";
     const restore = "UPDATE consents SET visibility='public',updated_at=? WHERE github_id=? AND repo_id=? AND active=1 AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?)";
     expect(worker).toContain(scheduledQuery);
@@ -57,14 +79,14 @@ describe("publication safety contract", () => {
     expect(worker).toContain("await retract(); return;");
   });
   it("uses one generation for a partial traversal and advances only when starting a new traversal", () => {
-    const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
+    const worker = readRepositoryFile("../src/worker.ts");
     expect(worker).toContain("CASE WHEN sync_jobs.cursor IS NULL THEN sync_jobs.generation+1 ELSE sync_jobs.generation END");
     expect(worker).toContain("RETURNING cursor,generation");
     expect(worker).toContain("generation<?");
   });
   it("acquires one compare-and-set lease and fences all sync state transitions with its token", () => {
-    const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
-    const leaseMigration = readFileSync(new URL("../migrations/0003_sync_job_leases.sql", import.meta.url), "utf8");
+    const worker = readRepositoryFile("../src/worker.ts");
+    const leaseMigration = readRepositoryFile("../migrations/0003_sync_job_leases.sql");
     expect(leaseMigration).toMatch(/ADD COLUMN lease_token TEXT/);
     expect(worker).toContain("WHERE sync_jobs.lease_token IS NULL OR sync_jobs.lease_until IS NULL OR sync_jobs.lease_until<=?");
     expect(worker).toContain("lease_token=excluded.lease_token,lease_until=excluded.lease_until");
@@ -78,8 +100,8 @@ describe("publication safety contract", () => {
     expect(worker).toContain("terminal = complete || page + 1 === maxPages");
   });
   it("uses durable, bounded, pre-CSRF rate limits for opt-in and withdrawal", () => {
-    const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
-    const migration = readFileSync(new URL("../migrations/0002_rate_limits.sql", import.meta.url), "utf8");
+    const worker = readRepositoryFile("../src/worker.ts");
+    const migration = readRepositoryFile("../migrations/0002_rate_limits.sql");
     expect(migration).toMatch(/PRIMARY KEY \(scope, actor_key\)/);
     expect(migration).toMatch(/rate_limits_expiry/);
     expect(worker).toContain("CF-Connecting-IP");
@@ -89,12 +111,12 @@ describe("publication safety contract", () => {
     expect(worker.indexOf('consumeMutationRateLimit(c, "consent_withdrawal")')).toBeLessThan(worker.lastIndexOf("const s = await csrf(c)"));
   });
   it("advances the bounded sync cursor before fenced partial progress is persisted", () => {
-    const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
+    const worker = readRepositoryFile("../src/worker.ts");
     expect(worker).toContain("cursor = result.cursor;");
     expect(worker).toContain("complete ? null : cursor");
   });
   it("persists only the minimal approved PR fields", () => {
-    const migration = readFileSync(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8");
+    const migration = readRepositoryFile("../migrations/0001_initial.sql");
     expect(migration).toMatch(/pr_id TEXT PRIMARY KEY/);
     expect(migration).toMatch(/merged_at TEXT NOT NULL/);
     expect(migration).not.toMatch(/\b(title|body|patch|content)\b/i);

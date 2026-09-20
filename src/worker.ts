@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { eligibleRepo, GitHubClient, installationToken, type Repo } from "./github";
 
-export type Env = { ASSETS: Fetcher; DB: D1Database; PUBLIC_ORIGIN: string; GITHUB_APP_ID: string; GITHUB_APP_PRIVATE_KEY: string; GITHUB_OAUTH_CLIENT_ID: string; GITHUB_OAUTH_CLIENT_SECRET: string; SESSION_ENCRYPTION_KEY_BASE64: string };
+export type Env = { ASSETS: Fetcher; DB: D1Database; PUBLIC_ORIGIN: string; GITHUB_APP_ID: string; GITHUB_APP_PRIVATE_KEY: string; GITHUB_APP_CLIENT_ID: string; GITHUB_APP_CLIENT_SECRET: string; SESSION_ENCRYPTION_KEY_BASE64: string };
 type Session = { github_id: string; github_login: string; avatar_url: string | null; csrf_token: string; access_token_ciphertext: string | null };
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const now = () => new Date().toISOString();
@@ -34,13 +34,13 @@ export function createApp() {
     const state = random(); const expiry = new Date(Date.now() + 10 * 60_000).toISOString();
     await c.env.DB.prepare("INSERT INTO oauth_states(state_hash,expires_at) VALUES(?,?)").bind(await hash(state), expiry).run();
     const callback = `${c.env.PUBLIC_ORIGIN}/api/auth/github/callback`;
-    return c.redirect(`https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(c.env.GITHUB_OAUTH_CLIENT_ID)}&redirect_uri=${encodeURIComponent(callback)}&state=${state}`);
+    return c.redirect(`https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(c.env.GITHUB_APP_CLIENT_ID)}&redirect_uri=${encodeURIComponent(callback)}&state=${state}`);
   });
   app.get("/api/auth/github/callback", async c => {
     const state = c.req.query("state"), code = c.req.query("code"); if (!state || !code) return c.json({ error: "oauth_invalid" }, 400);
     const used = await c.env.DB.prepare("DELETE FROM oauth_states WHERE state_hash=? AND expires_at>?").bind(await hash(state), now()).run(); if (!used.meta.changes) return c.json({ error: "oauth_state_invalid" }, 400);
     const callback = `${c.env.PUBLIC_ORIGIN}/api/auth/github/callback`;
-    const exchange = await fetch("https://github.com/login/oauth/access_token", { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ client_id: c.env.GITHUB_OAUTH_CLIENT_ID, client_secret: c.env.GITHUB_OAUTH_CLIENT_SECRET, code, redirect_uri: callback }) });
+    const exchange = await fetch("https://github.com/login/oauth/access_token", { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ client_id: c.env.GITHUB_APP_CLIENT_ID, client_secret: c.env.GITHUB_APP_CLIENT_SECRET, code, redirect_uri: callback }) });
     const granted = await exchange.json() as { access_token?: string }; if (!exchange.ok || !granted.access_token) return c.json({ error: "oauth_exchange_failed" }, 502);
     const user = await new GitHubClient(granted.access_token).viewer(); const token = random(), timestamp = now();
     await c.env.DB.prepare("INSERT OR REPLACE INTO sessions(token_hash,github_id,github_login,avatar_url,csrf_token,access_token_ciphertext,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)").bind(await hash(token),user.id,user.login,user.avatarUrl,random(),await seal(c.env,granted.access_token),new Date(Date.now() + 8 * 60 * 60_000).toISOString(),timestamp).run();
