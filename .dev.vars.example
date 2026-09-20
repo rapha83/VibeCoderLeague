@@ -1,0 +1,7 @@
+# Local development only. Do not commit .dev.vars or production values.
+PUBLIC_ORIGIN=http://localhost:8787
+GITHUB_APP_ID=
+GITHUB_APP_PRIVATE_KEY=
+GITHUB_OAUTH_CLIENT_ID=
+GITHUB_OAUTH_CLIENT_SECRET=
+SESSION_ENCRYPTION_KEY_BASE64=
