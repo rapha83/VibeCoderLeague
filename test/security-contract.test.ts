@@ -45,6 +45,38 @@ describe("publication safety contract", () => {
     expect(worker).toContain("ON CONFLICT(pr_id)");
     expect(worker).toContain("visibility='unknown'");
   });
+  it("uses one generation for a partial traversal and advances only when starting a new traversal", () => {
+    const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
+    expect(worker).toContain("CASE WHEN sync_jobs.cursor IS NULL THEN sync_jobs.generation+1 ELSE sync_jobs.generation END");
+    expect(worker).toContain("RETURNING cursor,generation");
+    expect(worker).toContain("generation<?");
+  });
+  it("acquires one compare-and-set lease and fences all sync state transitions with its token", () => {
+    const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
+    const leaseMigration = readFileSync(new URL("../migrations/0003_sync_job_leases.sql", import.meta.url), "utf8");
+    expect(leaseMigration).toMatch(/ADD COLUMN lease_token TEXT/);
+    expect(worker).toContain("WHERE sync_jobs.lease_token IS NULL OR sync_jobs.lease_until IS NULL OR sync_jobs.lease_until<=?");
+    expect(worker).toContain("lease_token=excluded.lease_token,lease_until=excluded.lease_until");
+    expect(worker).toContain("AND lease_token=? AND lease_until>?");
+    expect(worker).toContain("UPDATE sync_jobs SET lease_until=?");
+    expect(worker).toContain("AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?)");
+    expect(worker).toContain("generation=MAX(pull_requests.generation,excluded.generation)");
+    expect(worker).toContain('error.message === "sync_lease_lost"');
+    expect(worker).toContain("invalid_sync_page_limit");
+    expect(worker).toContain("lease_token=CASE WHEN ? THEN NULL ELSE lease_token END");
+    expect(worker).toContain("terminal = complete || page + 1 === maxPages");
+  });
+  it("uses durable, bounded, pre-CSRF rate limits for opt-in and withdrawal", () => {
+    const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
+    const migration = readFileSync(new URL("../migrations/0002_rate_limits.sql", import.meta.url), "utf8");
+    expect(migration).toMatch(/PRIMARY KEY \(scope, actor_key\)/);
+    expect(migration).toMatch(/rate_limits_expiry/);
+    expect(worker).toContain("CF-Connecting-IP");
+    expect(worker).toContain("ON CONFLICT(scope,actor_key) DO UPDATE");
+    expect(worker).toContain("MIN(rate_limits.request_count+1,?)");
+    expect(worker.indexOf('consumeMutationRateLimit(c, "selection")')).toBeLessThan(worker.indexOf("const s = await csrf(c)"));
+    expect(worker.indexOf('consumeMutationRateLimit(c, "consent_withdrawal")')).toBeLessThan(worker.lastIndexOf("const s = await csrf(c)"));
+  });
   it("persists only the minimal approved PR fields", () => {
     const migration = readFileSync(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8");
     expect(migration).toMatch(/pr_id TEXT PRIMARY KEY/);
