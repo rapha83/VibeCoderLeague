@@ -7,7 +7,7 @@ A **public, opt-in monthly leaderboard** for merged GitHub pull requests from ex
 - Tooling/model attribution is optional, self-declared, and labelled **unverified**.
 - Withdrawal or a repository becoming private/inaccessible removes affected contribution records from public output.
 
-This Cloudflare Free MVP has Worker code, D1 migration, static frontend, configuration, and local tests. It is **not deployed or GitHub-integrated**: the repository contains no credentials, Cloudflare database ID, GitHub App, or live repository configuration.
+This Cloudflare Free MVP has Worker code, D1 migrations, static frontend, configuration, and local tests. It is **not deployed or GitHub-integrated**: the repository contains no credentials, Cloudflare database ID, GitHub App, or live repository configuration.
 
 ## Quick start
 
@@ -16,7 +16,7 @@ npm ci
 cp .dev.vars.example .dev.vars # fill values locally; never commit this file
 npm test
 npm run check
-npx wrangler d1 execute vibe-coder-league --local --file migrations/0001_initial.sql
+npx wrangler d1 migrations apply vibe-coder-league --local
 npx wrangler dev --local
 ```
 

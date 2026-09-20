@@ -45,6 +45,17 @@ describe("publication safety contract", () => {
     expect(worker).toContain("ON CONFLICT(pr_id)");
     expect(worker).toContain("visibility='unknown'");
   });
+  it("retries active unknown visibility and restores public only through the current lease before PR writes", () => {
+    const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
+    const scheduledQuery = "FROM consents WHERE active=1 AND visibility IN ('public','unknown')";
+    const restore = "UPDATE consents SET visibility='public',updated_at=? WHERE github_id=? AND repo_id=? AND active=1 AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?)";
+    expect(worker).toContain(scheduledQuery);
+    expect(worker).toContain(restore);
+    expect(worker.indexOf(restore)).toBeLessThan(worker.indexOf("INSERT INTO pull_requests"));
+    expect(worker).toContain("UPDATE consents SET visibility='unknown',updated_at=? WHERE github_id=? AND repo_id=? AND active=1");
+    expect(worker).toContain('error.message === "repo_inaccessible"');
+    expect(worker).toContain("await retract(); return;");
+  });
   it("uses one generation for a partial traversal and advances only when starting a new traversal", () => {
     const worker = readFileSync(new URL("../src/worker.ts", import.meta.url), "utf8");
     expect(worker).toContain("CASE WHEN sync_jobs.cursor IS NULL THEN sync_jobs.generation+1 ELSE sync_jobs.generation END");
