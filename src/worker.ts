@@ -12,6 +12,8 @@ export const utcMonth = (timestamp: string) => new Date(timestamp).toISOString()
 export const validMonth = (month: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
 const limitText = (value: unknown, max: number) => typeof value === "string" && value.trim().length <= max ? value.trim() || null : null;
 const MUTATION_RATE_LIMIT = 10, MUTATION_RATE_WINDOW_MS = 60_000;
+const OAUTH_TRANSACTION_COOKIE = "__Host-vcl-oauth", OAUTH_TRANSACTION_MAX_AGE = 10 * 60;
+const clearOAuthTransaction = (c: any) => setCookie(c, OAUTH_TRANSACTION_COOKIE, "", { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 0 });
 
 async function key(env: Env) { return crypto.subtle.importKey("raw", Uint8Array.from(atob(env.SESSION_ENCRYPTION_KEY_BASE64), c => c.charCodeAt(0)), "AES-GCM", false, ["encrypt", "decrypt"]); }
 async function seal(env: Env, token: string) { const iv = crypto.getRandomValues(new Uint8Array(12)); const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await key(env), encoder.encode(token)); return `${btoa(String.fromCharCode(...iv))}.${btoa(String.fromCharCode(...new Uint8Array(data)))}`; }
@@ -31,28 +33,39 @@ async function consumeMutationRateLimit(c: any, scope: string): Promise<boolean>
 export function createApp() {
   const app = new Hono<{ Bindings: Env }>();
   app.get("/api/auth/github", async c => {
-    const state = random(); const expiry = new Date(Date.now() + 10 * 60_000).toISOString();
-    await c.env.DB.prepare("INSERT INTO oauth_states(state_hash,expires_at) VALUES(?,?)").bind(await hash(state), expiry).run();
+    const state = random(), transaction = random(), expiry = new Date(Date.now() + OAUTH_TRANSACTION_MAX_AGE * 1_000).toISOString();
+    await c.env.DB.prepare("INSERT INTO oauth_states(state_hash,transaction_hash,expires_at) VALUES(?,?,?)").bind(await hash(state), await hash(transaction), expiry).run();
+    setCookie(c, OAUTH_TRANSACTION_COOKIE, transaction, { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: OAUTH_TRANSACTION_MAX_AGE });
     const callback = `${c.env.PUBLIC_ORIGIN}/api/auth/github/callback`;
     return c.redirect(`https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(c.env.GITHUB_APP_CLIENT_ID)}&redirect_uri=${encodeURIComponent(callback)}&state=${state}`);
   });
   app.get("/api/auth/github/callback", async c => {
-    const state = c.req.query("state"), code = c.req.query("code"); if (!state || !code) return c.json({ error: "oauth_invalid" }, 400);
-    const used = await c.env.DB.prepare("DELETE FROM oauth_states WHERE state_hash=? AND expires_at>?").bind(await hash(state), now()).run(); if (!used.meta.changes) return c.json({ error: "oauth_state_invalid" }, 400);
+    const state = c.req.query("state"), code = c.req.query("code"), transaction = getCookie(c, OAUTH_TRANSACTION_COOKIE);
+    if (!state || !code || !transaction) { clearOAuthTransaction(c); return c.json({ error: "oauth_invalid" }, 400); }
+    const used = await c.env.DB.prepare("DELETE FROM oauth_states WHERE state_hash=? AND transaction_hash=? AND expires_at>?").bind(await hash(state), await hash(transaction), now()).run();
+    if (!used.meta.changes) { clearOAuthTransaction(c); return c.json({ error: "oauth_state_invalid" }, 400); }
     const callback = `${c.env.PUBLIC_ORIGIN}/api/auth/github/callback`;
     const exchange = await fetch("https://github.com/login/oauth/access_token", { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ client_id: c.env.GITHUB_APP_CLIENT_ID, client_secret: c.env.GITHUB_APP_CLIENT_SECRET, code, redirect_uri: callback }) });
-    const granted = await exchange.json() as { access_token?: string }; if (!exchange.ok || !granted.access_token) return c.json({ error: "oauth_exchange_failed" }, 502);
-    const user = await new GitHubClient(granted.access_token).viewer(); const token = random(), timestamp = now();
-    await c.env.DB.prepare("INSERT OR REPLACE INTO sessions(token_hash,github_id,github_login,avatar_url,csrf_token,access_token_ciphertext,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)").bind(await hash(token),user.id,user.login,user.avatarUrl,random(),await seal(c.env,granted.access_token),new Date(Date.now() + 8 * 60 * 60_000).toISOString(),timestamp).run();
-    setCookie(c, "__Host-vcl", token, { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 8 * 60 * 60 }); return c.redirect(`${c.env.PUBLIC_ORIGIN}/`);
+    const granted = await exchange.json() as { access_token?: string }; if (!exchange.ok || !granted.access_token) { clearOAuthTransaction(c); return c.json({ error: "oauth_exchange_failed" }, 502); }
+    try {
+      const user = await new GitHubClient(granted.access_token).viewer(); const token = random(), timestamp = now();
+      await c.env.DB.prepare("INSERT OR REPLACE INTO sessions(token_hash,github_id,github_login,avatar_url,csrf_token,access_token_ciphertext,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)").bind(await hash(token),user.id,user.login,user.avatarUrl,random(),await seal(c.env,granted.access_token),new Date(Date.now() + 8 * 60 * 60_000).toISOString(),timestamp).run();
+      clearOAuthTransaction(c); setCookie(c, "__Host-vcl", token, { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 8 * 60 * 60 }); return c.redirect(`${c.env.PUBLIC_ORIGIN}/`);
+    } catch { clearOAuthTransaction(c); return c.json({ error: "oauth_completion_failed" }, 502); }
   });
   app.get("/api/rules", c => c.json({ rules: ["Participation is opt-in.", "One merged pull request counts once for its opted-in author in its merged-at UTC month.", "Only currently public, accessible repositories are published.", "Tooling and model declarations are unverified."] }, 200, { "Cache-Control": "public, max-age=300" }));
   app.get("/api/leaderboard", async c => {
     const month = c.req.query("month") ?? new Date().toISOString().slice(0, 7); if (!validMonth(month)) return c.json({ error: "invalid_month" }, 400);
-    const rows = await c.env.DB.prepare(`SELECT p.display_name displayName, GROUP_CONCAT(DISTINCT pr.repo_name) repository, COUNT(*) score FROM pull_requests pr JOIN participants p ON p.github_id=pr.author_id AND p.consent_active=1 JOIN consents co ON co.github_id=pr.author_id AND co.repo_id=pr.repo_id AND co.active=1 AND co.visibility='public' WHERE pr.month_utc=? GROUP BY pr.author_id ORDER BY score DESC, displayName ASC LIMIT 100`).bind(month).all();
+    const rows = await c.env.DB.prepare(`SELECT p.public_profile_id profileId, p.display_name displayName, GROUP_CONCAT(DISTINCT pr.repo_name) repository, COUNT(*) score FROM pull_requests pr JOIN participants p ON p.github_id=pr.author_id AND p.consent_active=1 JOIN consents co ON co.github_id=pr.author_id AND co.repo_id=pr.repo_id AND co.active=1 AND co.visibility='public' WHERE pr.month_utc=? AND p.public_profile_id IS NOT NULL GROUP BY pr.author_id ORDER BY score DESC, displayName ASC LIMIT 100`).bind(month).all();
     return c.json({ month, rows: rows.results.map((r: any, i) => ({ rank: i + 1, ...r })) }, 200, { "Cache-Control": "public, max-age=60" });
   });
-  app.get("/api/session", async c => { const s = await session(c); if (!s) return c.json({ authenticated: false, connectUrl: "/api/auth/github" }, 200, { "Cache-Control": "no-store" }); const p = await c.env.DB.prepare("SELECT consent_active FROM participants WHERE github_id=?").bind(s.github_id).first<{ consent_active: number }>(); return c.json({ authenticated: true, user: { login: s.github_login, avatarUrl: s.avatar_url }, csrfToken: s.csrf_token, participating: p?.consent_active === 1 }, 200, { "Cache-Control": "no-store" }); });
+  app.get("/api/profiles/:id", async c => {
+    const profile = await c.env.DB.prepare("SELECT github_id,display_name FROM participants WHERE public_profile_id=? AND consent_active=1 AND EXISTS (SELECT 1 FROM consents WHERE consents.github_id=participants.github_id AND active=1 AND visibility='public')").bind(c.req.param("id")).first<{ github_id: string; display_name: string }>();
+    if (!profile) return c.json({ error: "profile_not_found" }, 404, { "Cache-Control": "no-store" });
+    const repositories = await c.env.DB.prepare("SELECT pr.repo_name repository,COUNT(*) pullRequests FROM pull_requests pr JOIN consents co ON co.github_id=pr.author_id AND co.repo_id=pr.repo_id AND co.active=1 AND co.visibility='public' WHERE pr.author_id=? GROUP BY pr.repo_id,pr.repo_name ORDER BY repository ASC").bind(profile.github_id).all();
+    const declarations = await c.env.DB.prepare("SELECT DISTINCT declared_tooling tooling,declared_model model FROM consents WHERE github_id=? AND active=1 AND visibility='public' AND (declared_tooling IS NOT NULL OR declared_model IS NOT NULL) ORDER BY declared_tooling,declared_model").bind(profile.github_id).all<{ tooling: string | null; model: string | null }>();
+    return c.json({ id: c.req.param("id"), displayName: profile.display_name, repositories: repositories.results, declarations: { status: "self_declared_unverified", tooling: [...new Set(declarations.results.flatMap(row => row.tooling ? [row.tooling] : []))], models: [...new Set(declarations.results.flatMap(row => row.model ? [row.model] : []))] } }, 200, { "Cache-Control": "no-store" });
+  });
   app.get("/api/repos", async c => { const s = await session(c); if (!s || !s.access_token_ciphertext) return unauthorized(c); const repos = await new GitHubClient(await open(c.env, s.access_token_ciphertext)).accessibleRepos(); return c.json({ repos: repos.filter(r => r.visibility === "PUBLIC").map(r => ({ id: r.id, fullName: r.nameWithOwner })) }, 200, { "Cache-Control": "no-store" }); });
   app.post("/api/selections", async c => {
     try { if (!await consumeMutationRateLimit(c, "selection")) return c.json({ error: "rate_limited" }, 429, { "Retry-After": String(MUTATION_RATE_WINDOW_MS / 1000) }); } catch { return c.json({ error: "rate_limit_unavailable" }, 503); }
@@ -61,7 +74,7 @@ export function createApp() {
     const client = new GitHubClient(await open(c.env, s.access_token_ciphertext)); const available = await client.accessibleRepos(); const candidate = eligibleRepo(available, body.repoId); if (!candidate) return c.json({ error: "repo_not_accessible_or_public" }, 403);
     let repo: Repo; try { repo = await client.publicRepo(candidate); } catch { return c.json({ error: "repo_not_public" }, 403); }
     const timestamp = now(), tooling = limitText(body.declaredTooling, 80), model = limitText(body.declaredModel, 80);
-    await c.env.DB.batch([c.env.DB.prepare("INSERT INTO participants(github_id,github_login,avatar_url,display_name,consent_active,withdrawn_at,updated_at) VALUES(?,?,?,?,1,NULL,?) ON CONFLICT(github_id) DO UPDATE SET github_login=excluded.github_login,avatar_url=excluded.avatar_url,consent_active=1,withdrawn_at=NULL,updated_at=excluded.updated_at").bind(s.github_id,s.github_login,s.avatar_url,s.github_login,timestamp), c.env.DB.prepare("INSERT INTO consents(github_id,repo_id,repo_name,installation_id,visibility,declared_tooling,declared_model,active,updated_at) VALUES(?,?,?,?, 'public',?,?,1,?) ON CONFLICT(github_id,repo_id) DO UPDATE SET active=1,visibility='public',declared_tooling=excluded.declared_tooling,declared_model=excluded.declared_model,updated_at=excluded.updated_at").bind(s.github_id,repo.id,repo.nameWithOwner,candidate.installationId,tooling,model,timestamp)]);
+    await c.env.DB.batch([c.env.DB.prepare("INSERT INTO participants(github_id,github_login,avatar_url,display_name,public_profile_id,consent_active,withdrawn_at,updated_at) VALUES(?,?,?,?,?,1,NULL,?) ON CONFLICT(github_id) DO UPDATE SET github_login=excluded.github_login,avatar_url=excluded.avatar_url,display_name=excluded.display_name,public_profile_id=COALESCE(participants.public_profile_id,excluded.public_profile_id),consent_active=1,withdrawn_at=NULL,updated_at=excluded.updated_at").bind(s.github_id,s.github_login,s.avatar_url,s.github_login,random(),timestamp), c.env.DB.prepare("INSERT INTO consents(github_id,repo_id,repo_name,installation_id,visibility,declared_tooling,declared_model,active,updated_at) VALUES(?,?,?,?, 'public',?,?,1,?) ON CONFLICT(github_id,repo_id) DO UPDATE SET active=1,visibility='public',declared_tooling=excluded.declared_tooling,declared_model=excluded.declared_model,updated_at=excluded.updated_at").bind(s.github_id,repo.id,repo.nameWithOwner,candidate.installationId,tooling,model,timestamp)]);
     return c.json({ ok: true }, 201);
   });
   app.delete("/api/consent", async c => { try { if (!await consumeMutationRateLimit(c, "consent_withdrawal")) return c.json({ error: "rate_limited" }, 429, { "Retry-After": String(MUTATION_RATE_WINDOW_MS / 1000) }); } catch { return c.json({ error: "rate_limit_unavailable" }, 503); } const s = await csrf(c); if (s instanceof Response) return s; const timestamp = now(); await c.env.DB.batch([c.env.DB.prepare("UPDATE participants SET consent_active=0,withdrawn_at=?,updated_at=? WHERE github_id=?").bind(timestamp,timestamp,s.github_id), c.env.DB.prepare("UPDATE consents SET active=0,updated_at=? WHERE github_id=?").bind(timestamp,s.github_id), c.env.DB.prepare("DELETE FROM pull_requests WHERE author_id=?").bind(s.github_id)]); return c.json({ ok: true }); });

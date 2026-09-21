@@ -2,7 +2,8 @@
   "use strict";
 
   const $ = (selector) => document.querySelector(selector);
-  const state = { csrfToken: null, session: null, request: 0 };
+  const requestFetch = window.fetch.bind(window);
+  const state = { csrfToken: null, session: null, leaderboardRequest: 0, sessionRequest: 0, profileRequest: 0 };
   const monthInput = $("#month-picker");
   const leaderboardBody = $("#leaderboard-body");
   const leaderboardStatus = $("#leaderboard-status");
@@ -10,6 +11,9 @@
   const sessionStatus = $("#session-status");
   const form = $("#participation-form");
   const repoSelect = $("#repo-select");
+  const profileSection = $("#profile");
+  const profileContent = $("#profile-content");
+  const profileStatus = $("#profile-status");
 
   function currentMonth() { return new Date().toISOString().slice(0, 7); }
   function asObject(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
@@ -18,42 +22,51 @@
   function setButtonBusy(button, busy, text) { button.disabled = busy; if (text) button.textContent = text; }
   function displayError(error) { return error instanceof Error && error.message ? error.message : "The request could not be completed."; }
 
+  function profilePath(profileId) { return `#/profiles/${encodeURIComponent(profileId)}`; }
+  function profileIdFromHash() { const match = /^#\/profiles\/([^/?#]+)$/.exec(window.location.hash); return match ? decodeURIComponent(match[1]) : null; }
+  function repoOption(label, value) { const option = document.createElement("option"); option.textContent = label; option.value = value; return option; }
+  function handleUnauthorized() { ++state.sessionRequest; state.csrfToken = null; state.session = null; form.hidden = true; $("#withdrawal-panel").hidden = true; repoSelect.disabled = true; repoSelect.replaceChildren(repoOption("Choose a repository", "")); setMessage(sessionStatus, "Your session expired. Reconnect GitHub to continue.", "error"); showConnect({ connectUrl: "/api/auth/github" }); }
+
   async function request(path, options = {}) {
     const headers = new Headers(options.headers || {});
     headers.set("Accept", "application/json");
     if (options.body) headers.set("Content-Type", "application/json");
     if (options.method && options.method !== "GET" && state.csrfToken) headers.set("X-CSRF-Token", state.csrfToken);
-    const response = await fetch(path, { credentials: "same-origin", ...options, headers });
+    const response = await requestFetch(path, { credentials: "same-origin", ...options, headers });
     const contentType = response.headers.get("content-type") || "";
     const data = contentType.includes("application/json") ? await response.json().catch(() => null) : null;
-    if (!response.ok) throw new Error(asText(asObject(data).message || asObject(data).error, `Request failed (${response.status}).`));
+    if (!response.ok) { if (response.status === 401) handleUnauthorized(); const error = new Error(asText(asObject(data).message || asObject(data).error, `Request failed (${response.status}).`)); error.status = response.status; throw error; }
     return data;
   }
 
-  function row(data, cells, className = "") { const tr = document.createElement("tr"); if (className) tr.className = className; cells.forEach((value) => { const td = document.createElement("td"); td.textContent = value; tr.append(td); }); data.append(tr); }
+  function row(data, cells, className = "", profileId = null) { const tr = document.createElement("tr"); if (className) tr.className = className; cells.forEach((value, index) => { const td = document.createElement("td"); if (index === 1 && profileId) { const link = document.createElement("a"); link.href = profilePath(profileId); link.textContent = value; td.append(link); } else td.textContent = value; tr.append(td); }); data.append(tr); }
   function itemList(value) { return Array.isArray(value) ? value : []; }
   function leaderboardRows(payload) { const source = asObject(payload); return Array.isArray(payload) ? payload : itemList(source.rows || source.entries || source.leaderboard); }
 
   async function loadLeaderboard() {
-    const requestId = ++state.request;
+    const requestId = ++state.leaderboardRequest;
     leaderboardBody.replaceChildren(); setMessage(leaderboardStatus, "Loading leaderboard…"); $("#leaderboard-retry").hidden = true;
     try {
       const payload = await request(`/api/leaderboard?month=${encodeURIComponent(monthInput.value)}`);
-      if (requestId !== state.request) return;
+      if (requestId !== state.leaderboardRequest) return;
       const rows = leaderboardRows(payload);
       if (!rows.length) {
         row(leaderboardBody, ["", "No opted-in participants yet for this month.", "", ""]);
         setMessage(leaderboardStatus, "No opted-in participants are published for this month.");
         return;
       }
-      rows.forEach((item, index) => { const entry = asObject(item); row(leaderboardBody, [asText(entry.rank, String(index + 1)), asText(entry.displayName || entry.name || entry.participant || entry.user), asText(entry.repository || entry.repo || entry.repositoryName), asText(entry.score || entry.points || entry.total)], "leaderboard-entry"); });
+      rows.forEach((item, index) => { const entry = asObject(item); row(leaderboardBody, [asText(entry.rank, String(index + 1)), asText(entry.displayName), asText(entry.repository), asText(entry.score)], "leaderboard-entry", typeof entry.profileId === "string" ? entry.profileId : null); });
       setMessage(leaderboardStatus, `${rows.length} opted-in participant${rows.length === 1 ? "" : "s"} published for ${monthInput.value}.`);
     } catch (error) {
-      if (requestId !== state.request) return;
+      if (requestId !== state.leaderboardRequest) return;
       row(leaderboardBody, ["", "Leaderboard unavailable.", "", ""]);
       setMessage(leaderboardStatus, displayError(error), "error"); $("#leaderboard-retry").hidden = false;
     }
   }
+
+  function declaredDetails(label, values) { const declarations = itemList(values).filter(value => typeof value === "string" && value.trim()); if (!declarations.length) return null; const item = document.createElement("p"); const strong = document.createElement("strong"); const qualifier = document.createElement("span"); strong.textContent = `${label}: `; qualifier.className = "unverified"; qualifier.textContent = "self-declared — unverified"; item.append(strong, declarations.join(", "), " ", qualifier); return item; }
+  async function loadProfile(profileId) { const requestId = ++state.profileRequest; profileSection.hidden = false; profileContent.replaceChildren(); setMessage(profileStatus, "Loading public profile…"); $("#profile-retry").hidden = true; try { const payload = asObject(await request(`/api/profiles/${encodeURIComponent(profileId)}`)); if (requestId !== state.profileRequest || profileId !== profileIdFromHash()) return; const profile = asObject(payload.profile || payload); const declarations = asObject(profile.declarations); const heading = document.createElement("h2"); heading.id = "profile-title"; heading.textContent = asText(profile.displayName, "Participant"); const copy = document.createElement("p"); copy.textContent = "This public profile shows only the participant's published, self-declared details."; profileContent.append(heading, copy); const tooling = declarations.status === "self_declared_unverified" ? declaredDetails("Tooling", declarations.tooling) : null; const models = declarations.status === "self_declared_unverified" ? declaredDetails("Models", declarations.models) : null; if (tooling) profileContent.append(tooling); if (models) profileContent.append(models); if (!tooling && !models) { const empty = document.createElement("p"); empty.textContent = "No self-declared tooling or model details were provided."; profileContent.append(empty); } setMessage(profileStatus, ""); } catch (error) { if (requestId !== state.profileRequest) return; setMessage(profileStatus, displayError(error), "error"); $("#profile-retry").hidden = false; } }
+  function route() { const profileId = profileIdFromHash(); if (!profileId) { ++state.profileRequest; profileSection.hidden = true; return; } loadProfile(profileId); }
 
   async function loadRules() {
     const content = $("#rules-content"); content.replaceChildren(); setMessage(rulesStatus, "Loading rules…"); $("#rules-retry").hidden = true;
@@ -71,25 +84,26 @@
   function connectionUrl(session) { return session.connectUrl || session.authorizationUrl || session.githubAuthUrl || session.loginUrl; }
   function showConnect(session) { const area = $("#connect-action"); area.replaceChildren(); const url = connectionUrl(session); if (typeof url === "string" && (/^https:\/\//i.test(url) || url.startsWith("/"))) { const link = document.createElement("a"); link.className = "button button-primary"; link.href = url; link.textContent = "Connect GitHub"; area.append(link); } else { const note = document.createElement("p"); note.className = "field-help"; note.textContent = "Connect GitHub through the sign-in route provided by this service."; area.append(note); } }
 
-  async function loadRepos() {
-    repoSelect.replaceChildren(new Option("Choose a repository", "")); repoSelect.disabled = true;
+  async function loadRepos(sessionRequest = state.sessionRequest) {
+    repoSelect.replaceChildren(repoOption("Choose a repository", "")); repoSelect.disabled = true;
     try {
-      const payload = await request("/api/repos"); const source = asObject(payload); const repos = Array.isArray(payload) ? payload : itemList(source.repos || source.repositories);
-      repos.forEach((repo) => { const item = asObject(repo); const id = asText(item.id || item.repoId, ""); if (!id) return; repoSelect.add(new Option(asText(item.fullName || item.name || item.repository, id), id)); });
+      const payload = await request("/api/repos"); if (sessionRequest !== state.sessionRequest) return; const source = asObject(payload); const repos = Array.isArray(payload) ? payload : itemList(source.repos || source.repositories);
+      repos.forEach((repo) => { const item = asObject(repo); const id = asText(item.id, ""); if (!id) return; repoSelect.append(repoOption(asText(item.fullName, id), id)); });
       repoSelect.disabled = repos.length === 0;
       if (!repos.length) setMessage($("#form-message"), "No eligible public repositories are available for this session.", "error");
-    } catch (error) { setMessage($("#form-message"), displayError(error), "error"); }
+    } catch (error) { if (sessionRequest === state.sessionRequest) setMessage($("#form-message"), displayError(error), "error"); }
   }
 
   async function loadSession() {
+    const requestId = ++state.sessionRequest;
     form.hidden = true; $("#withdrawal-panel").hidden = true; $("#connect-action").replaceChildren(); setMessage(sessionStatus, "Checking session…");
     try {
-      const payload = asObject(await request("/api/session")); state.session = payload; state.csrfToken = asText(payload.csrfToken || payload.csrf, "") || null;
+      const payload = asObject(await request("/api/session")); if (requestId !== state.sessionRequest) return; state.session = payload; state.csrfToken = asText(payload.csrfToken || payload.csrf, "") || null;
       if (!sessionIsAuthenticated(payload)) { setMessage(sessionStatus, "Connect GitHub to review repositories and choose whether to participate."); showConnect(payload); return; }
       if (!state.csrfToken) { setMessage(sessionStatus, "Your session cannot make participation changes right now. Refresh and try again.", "error"); return; }
       if (participating(payload)) { setMessage(sessionStatus, "Your session is connected."); $("#withdrawal-panel").hidden = false; return; }
-      setMessage(sessionStatus, "Your session is connected. Choose a repository and confirm consent to participate."); form.hidden = false; await loadRepos();
-    } catch (error) { setMessage(sessionStatus, displayError(error), "error"); }
+      setMessage(sessionStatus, "Your session is connected. Choose a repository and confirm consent to participate."); form.hidden = false; await loadRepos(requestId);
+    } catch (error) { if (requestId === state.sessionRequest) setMessage(sessionStatus, displayError(error), "error"); }
   }
 
   form.addEventListener("submit", async (event) => {
@@ -103,6 +117,6 @@
   });
 
   $("#withdraw-consent").addEventListener("click", async () => { const button = $("#withdraw-consent"); const message = $("#withdrawal-message"); if (!state.csrfToken) { setMessage(message, "Your session cannot withdraw consent right now. Refresh and try again.", "error"); return; } setButtonBusy(button, true, "Withdrawing…"); setMessage(message, ""); try { await request("/api/consent", { method:"DELETE" }); await Promise.all([loadSession(), loadLeaderboard()]); setMessage(sessionStatus, "Consent withdrawn. You can choose a repository and opt in again.", "success"); } catch (error) { setMessage(message, displayError(error), "error"); } finally { setButtonBusy(button, false, "Withdraw consent"); } });
-  monthInput.value = currentMonth(); monthInput.addEventListener("change", loadLeaderboard); $("#leaderboard-retry").addEventListener("click", loadLeaderboard); $("#rules-retry").addEventListener("click", loadRules);
-  loadLeaderboard(); loadRules(); loadSession();
+  monthInput.value = currentMonth(); monthInput.addEventListener("change", loadLeaderboard); $("#leaderboard-retry").addEventListener("click", loadLeaderboard); $("#rules-retry").addEventListener("click", loadRules); $("#profile-retry").addEventListener("click", route); window.addEventListener("hashchange", route);
+  loadLeaderboard(); loadRules(); loadSession(); route();
 })();
