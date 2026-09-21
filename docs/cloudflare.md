@@ -1,10 +1,10 @@
 # Cloudflare Free deployment and operations
 
-The repository contains the Cloudflare Worker, D1 migration, static assets, and `wrangler.toml`; it does not contain account credentials, a real D1 database ID, or deployed Cloudflare state. Cloudflare account access, project IDs, domain/DNS changes, GitHub credentials, and secret values remain owner-supplied and unvalidated.
+The repository contains the Cloudflare Worker, D1 migrations, static assets, and `wrangler.toml`. It is bound to one dedicated D1 database, `vibe-coder-league` (`a5fcb38c-026a-4bd3-9f93-a2822cf067b4`), in the confirmed Cloudflare account. The Worker is not deployed, no Worker secrets are configured, and no remote migration has been applied.
 
 ## Free-plan target
 
-Use the included single Worker for public API/UI and scheduled sync, with D1 for the small derived dataset. The configuration declares static assets, one D1 binding (`DB`), an every-15-minutes Cron Trigger, and `workers_dev = true`. The first deployment is therefore reachable at the account's `workers.dev` subdomain; no route or custom domain is configured or needed for the initial smoke path. Confirm current Free-plan quotas, runtime and D1 limits before launch; do not add paid resources implicitly.
+Use the included single Worker for public API/UI and scheduled sync, with D1 for the small derived dataset. The configuration declares static assets, one D1 binding (`DB`), `workers_dev = true`, and **no cron trigger**. Cron remains deliberately disabled until an end-to-end GitHub App journey has direct live evidence. Do not add paid resources, custom domains, DNS routes, or other D1 databases.
 
 Configure secrets only through Cloudflare secret storage, never committed files:
 
@@ -15,50 +15,42 @@ Configure secrets only through Cloudflare secret storage, never committed files:
 - `SESSION_ENCRYPTION_KEY_BASE64`
 - `PUBLIC_ORIGIN`
 
-Replace the placeholder `database_id` in `wrangler.toml` with the owner-created D1 database ID. Keep preview/local and production databases separate, and verify exactly one production schedule is active.
+Keep preview/local and production databases separate, and verify exactly one production schedule only after activation is authorized by evidence.
 
-## First deployment: workers.dev activation and smoke path
+## workers.dev activation gate
 
-These are owner-run instructions. They do not authorize deployment in this change.
+The confirmed account already has the Workers subdomain `grumpzillax`, as returned by Cloudflare's account API on 2026-09-21. The requested exact subdomain is `grumpuzillax`; it cannot be set because an account supports only one Workers subdomain. Do not deploy this Worker to `grumpzillax.workers.dev`, use another subdomain, add a route, or set a callback until the owner provides an explicit revised origin/authorization.
 
-1. In the intended Cloudflare account, enable/select that account's Workers subdomain when prompted by Wrangler. The resulting origin has the form `https://vibe-coder-league.<account-subdomain>.workers.dev`; record the exact origin outside Git.
-2. Create/select the D1 database, replace the `database_id` placeholder locally, and apply all migrations exactly once to that database:
+If a future approved origin is available, use the reported Worker origin exactly as `PUBLIC_ORIGIN`, with no trailing slash, and set the GitHub App's user authorization callback to:
+
+```text
+${PUBLIC_ORIGIN}/api/auth/github/callback
+```
+
+The browser flow uses the GitHub App's client ID and client secret, not credentials from a separate OAuth App, an App ID, private key, or installation token.
+
+## Progressive activation sequence
+
+Only after the origin gate is resolved and the existing GitHub App's installation and all secret values are securely available:
+
+1. Apply the additive migrations to the dedicated database once:
    ```sh
    npx wrangler d1 migrations apply vibe-coder-league --remote
    ```
-3. Deploy the reviewed commit. Confirm Wrangler reports the `workers.dev` URL; do not add a route or custom domain for this initial path:
-   ```sh
-   npx wrangler deploy --dry-run
-   npx wrangler deploy
-   ```
-4. Set `PUBLIC_ORIGIN` to that exact HTTPS `workers.dev` origin (no trailing slash). In the GitHub App's **user authorization callback URL** setting, set exactly:
-   ```text
-   ${PUBLIC_ORIGIN}/api/auth/github/callback
-   ```
-   The browser flow uses the GitHub App's client ID and client secret, not credentials from a separate OAuth App, an App ID, private key, or installation token.
-5. Perform public smoke checks against the deployed origin before authentication. Expected results are a `200` from the static root and `GET /api/rules`; a current-month `GET /api/leaderboard` also returns `200` with a JSON response. For example:
-   ```sh
-   curl -i "${PUBLIC_ORIGIN}/"
-   curl -i "${PUBLIC_ORIGIN}/api/rules"
-   curl -i "${PUBLIC_ORIGIN}/api/leaderboard"
-   ```
-6. Then validate the GitHub App browser sign-in by opening `${PUBLIC_ORIGIN}/api/auth/github`. Confirm it redirects to GitHub with the App client ID and a one-time `state`, returns to the exact callback above, creates the secure session, and allows selection only from accessible, currently public App installations. Complete one explicit opt-in and verify it can be withdrawn.
-7. Confirm the scheduled handler and only one production cron. Use a controlled public repo for an initial read-only review, then permit the bounded sync. Verify opt-in filtering, withdrawal deletion, visibility retraction, continuation cursor behavior, and absence of tokens/raw upstream payloads in observability before public announcement.
-
-A workers.dev URL being reachable does not establish D1, GitHub authorization, App installation, or scheduled sync correctness; each remains a separate validation step.
+2. Set Worker secrets from an approved secure source, then deploy the reviewed commit with no cron configuration.
+3. Confirm the static root, `GET /api/rules`, and `GET /api/leaderboard` return `200` before authentication.
+4. Test one controlled public-repository user journey: GitHub App authorization, session, eligible public-repository selection, explicit opt-in, sync, monthly profile/count display, publication, and withdrawal/retraction. Confirm no tokens, private keys, or raw GitHub payloads appear in logs.
+5. Only then add one bounded cron trigger, redeploy, and confirm exactly one production schedule. A `workers.dev` URL alone does not validate D1, GitHub authorization, App installation, or scheduled sync.
 
 ## Migration and rollback
 
 - Record exact commit, schema migration, D1 target, and recovery point before applying a migration.
 - Prefer additive, backward-compatible migrations. Do not manually edit production tables to make a migration pass.
 - If deployment fails, preserve the last known good Worker. Code rollback is normally safe; D1 schema rollback requires an owner-approved recovery plan.
+- To disable an activated Worker safely, remove the cron trigger first (or redeploy the reviewed no-cron configuration), then disable/delete its secrets or Worker deployment as appropriate. Worker rollback does not undo D1 migrations.
 
 ## Sync continuation and failure policy
 
-Each scheduled run processes at most two GraphQL pages per consent and saves the D1 cursor. Runs derive rankings from stable PR IDs, so a retry is idempotent. A completed traversal removes stale records by generation. Private repositories retract records; GitHub ambiguity becomes `unknown` visibility and is excluded from public output until a later successful sync.
+Each scheduled invocation has one sequential work budget of 20 units. It charges before every installation-token mint and GitHub GraphQL page attempt, processes a deterministic bounded cohort, saves its D1 cursor, and releases its lease for partial/retryable work. Stable PR IDs make retries idempotent. A completed traversal removes stale records; private repositories retract records, and GitHub ambiguity becomes `unknown` visibility and is excluded from public output until a later successful sync.
 
 Inspect last success, cursor/status, page count, duration, rate-limit state, and error category—never tokens or raw payloads. On interruption, let the next cron continue from the committed cursor. Consent withdrawal remains authoritative over any concurrent sync.
-
-## Boundaries
-
-This change did not enable a Workers subdomain, create a Cloudflare project, apply a remote migration, deploy, configure DNS, activate a live Cron Trigger, create a GitHub App, or validate credentials. Those actions require owner-controlled account state and are intentionally documented rather than claimed complete.

@@ -3,11 +3,11 @@
 A **public, opt-in monthly leaderboard** for merged GitHub pull requests from explicitly selected, currently public repositories.
 
 - Participation and repository selection are explicit.
-- A merged PR is credited once to its opted-in author in the PR's `mergedAt` **UTC month**.
+- A merged PR is credited once to its opted-in author in its `mergedAt` **UTC month**.
 - Tooling/model attribution is optional, self-declared, and labelled **unverified**.
 - Withdrawal or a repository becoming private/inaccessible removes affected contribution records from public output.
 
-This Cloudflare Free MVP has Worker code, D1 migrations, static frontend, configuration, and local tests. It is **not deployed or GitHub-integrated**: the repository contains no credentials, Cloudflare database ID, GitHub App, or live repository configuration.
+This Cloudflare Free MVP has Worker code, D1 migrations, static frontend, a dedicated D1 binding, and local tests. The dedicated D1 database exists, but the Worker is **not deployed or GitHub-integrated**: no credentials are committed, no Worker secrets are configured, and no cron trigger is active.
 
 ## Quick start
 
