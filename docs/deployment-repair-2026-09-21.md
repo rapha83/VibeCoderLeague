@@ -8,20 +8,21 @@
 
 | Item | Result |
 | --- | --- |
-| Deployed source commit | `0f75049686b3bc575abea1af927d14eb4d1a7b9a` — `fix: target verified vibecoderleague worker` |
+| Deployed source commit | `a6a7c85e8c8b800b6c4fd814f917becc2a59f7d7` — `fix: restore anonymous session contract` |
+| Release-alignment commit | `0f75049686b3bc575abea1af927d14eb4d1a7b9a` — `fix: target verified vibecoderleague worker` |
 | Deployment Worker | `vibecoderleague` |
 | Deployed URL / `PUBLIC_ORIGIN` | `https://vibecoderleague.grumpzillax.workers.dev` exactly, without trailing slash |
-| Cloudflare version ID | `e9ff7e36-ce7d-4fe7-bcd8-56d999091e0a` |
+| Cloudflare version ID | `20128954-56de-4fe1-9ddc-25071c2de249` |
 | Deployment configuration | Assets `ASSETS`; D1 binding `DB` to `a5fcb38c-026a-4bd3-9f93-a2822cf067b4`; `PUBLIC_ORIGIN` exact; no cron declaration |
 | Documentation receipt source | This is a post-deployment documentation commit and is **not** the deployed source commit. |
 
 ## Repository release gate
 
-The candidate was committed and pushed before remote mutation. Full release validation was rerun from the clean source commit:
+The release-alignment candidate was committed and pushed before remote mutation. After smoke exposed the missing session route required by the frontend contract, the focused repair was implemented, validated, committed, pushed, and deployed as the final exact source commit above. Full release validation ran for both source candidates; the final candidate results were:
 
 | Check | Result |
 | --- | --- |
-| `npm test` | PASS — 3 files, 24 tests |
+| `npm test` | PASS — 3 files, 25 tests |
 | `npm run check` | PASS — TypeScript no-emit |
 | `node --check src/frontend/app.js` | PASS |
 | Local D1 migrations | PASS — no migrations remaining after all four apply locally |
@@ -68,10 +69,10 @@ All HTTP checks used the exact live origin. OAuth initiation was requested once 
 | `GET /styles.css` | PASS | HTTP 200, `text/css` |
 | `GET /api/rules` | PASS | HTTP 200, JSON rules object |
 | `GET /api/leaderboard` | PASS | HTTP 200, JSON object with current month and empty rows |
-| `GET /api/session` | FAIL | HTTP 404, plain text; no unauthenticated session response route is currently deployed |
+| `GET /api/session` | PASS | HTTP 200, JSON anonymous session contract with relative GitHub-init route |
 | `GET /api/auth/github`, redirects disabled | PARTIAL | HTTP 302 to the GitHub authorization host and a transaction cookie header were produced. It cannot be considered usable until all four GitHub App Worker secrets above are entered; no GitHub redirect was followed. |
 | Cron | PASS / disabled | No `[triggers]` declaration in deployed configuration; no cron was enabled. |
 
 ## Outcome
 
-The Worker-name mismatch, missing public origin, missing application D1 schema, and resulting leaderboard failure are repaired on the actual Worker and dedicated database. The activation is **not ready for owner login or opt-in**: the four GitHub App Worker secrets remain unavailable and must be entered directly by the owner in Cloudflare for `vibecoderleague`; `/api/session` also remains a 404 route. Do not enable cron or proceed through OAuth until those blockers are resolved and a further controlled smoke validates the intended session contract.
+The Worker-name mismatch, missing public origin, missing application D1 schema, leaderboard failure, and missing anonymous session route are repaired on the actual Worker and dedicated database. The activation is **not ready for owner login or opt-in**: the four GitHub App Worker secrets remain unavailable and must be entered directly by the owner in Cloudflare for `vibecoderleague`. Do not enable cron or proceed through OAuth until those blockers are resolved and a further controlled smoke validates the intended authorization journey.
