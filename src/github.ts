@@ -23,7 +23,7 @@ export class GitHubViewerError extends Error {
 }
 
 export class GitHubClient {
-  constructor(private readonly userToken: string, private readonly fetcher: typeof fetch = fetch) {}
+  constructor(private readonly userToken: string, private readonly fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init)) {}
   async viewer(): Promise<{ id: string; login: string; avatarUrl: string | null }> {
     const viewer = await this.rest("/user", true);
     if (!viewer || typeof viewer.node_id !== "string" || !viewer.node_id || typeof viewer.login !== "string" || !viewer.login) {

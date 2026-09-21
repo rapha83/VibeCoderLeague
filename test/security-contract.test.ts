@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { build } from "esbuild";
+import { Miniflare } from "miniflare";
 import { readFileSync } from "node:fs";
 import { eligibleRepo, GitHubClient, GitHubViewerError, prohibitedGitHubAccess } from "../src/github";
 import { utcMonth, validMonth } from "../src/worker";
@@ -38,6 +40,36 @@ describe("GitHub viewer boundary", () => {
     expect(headers.get("Authorization")).toBe(`Bearer ${fakeViewerToken}`);
     expect(headers.get("Accept")).toBe("application/vnd.github+json");
     expect(headers.get("User-Agent")).toBe("vibe-coder-league");
+  });
+
+  it("uses a global receiver for the default fetcher in Miniflare/workerd", async () => {
+    const bundle = await build({
+      bundle: true,
+      format: "esm",
+      platform: "browser",
+      write: false,
+      stdin: {
+        resolveDir: process.cwd(),
+        sourcefile: "github-client-receiver-worker.ts",
+        contents: `import { GitHubClient } from "./src/github.ts";
+          export default { async fetch() {
+            let receiver = "not_called";
+            globalThis.fetch = function () {
+              receiver = this === globalThis ? "global" : "other";
+              return new Response(JSON.stringify({ node_id: "U_test", login: "octo", avatar_url: null }));
+            };
+            const viewer = await new GitHubClient("test-user-token").viewer();
+            return Response.json({ receiver, viewer });
+          } };`
+      }
+    });
+    const mf = new Miniflare({ modules: true, script: bundle.outputFiles[0].text, compatibilityDate: "2024-12-18" });
+    try {
+      const response = await mf.dispatchFetch("https://worker.invalid/");
+      expect(await response.json()).toEqual({ receiver: "global", viewer: { id: "U_test", login: "octo", avatarUrl: null } });
+    } finally {
+      await mf.dispose();
+    }
   });
 
   it("reports only an allowlisted diagnostic for viewer failures", async () => {
