@@ -8,12 +8,14 @@
 
 | Item | Verified result |
 | --- | --- |
-| Branch and remote tip | Local `feat/public-opt-in-leaderboard` and `origin/feat/public-opt-in-leaderboard` both resolve to `4287d647da49a384ef10169e0afa0071f2e01cda`. |
+| Starting branch/remote tip | At reconciliation start, local `feat/public-opt-in-leaderboard` and `origin/feat/public-opt-in-leaderboard` both resolved to `4287d647da49a384ef10169e0afa0071f2e01cda`. |
 | Completion-classification repair | `70723a20ea9c98dd07b319ab42d4fa80eb2d144c` — `fix: classify OAuth completion failures safely` (2026-09-21 11:28:04 -03:00). |
 | Initiation preflight repair | `4287d647da49a384ef10169e0afa0071f2e01cda` — `fix: preflight OAuth session encryption safely` (2026-09-21 11:32:44 -03:00). |
 | What the source changes establish | The callback now returns only allowlisted completion stages (`viewer`, `session_encryption`, or `session_persistence`) with `oauth_completion_failed`, not exception details. The initiation route first validates the session-encryption key and, on invalid configuration, returns HTTP 503 with sanitized `oauth_configuration_invalid` / `session_encryption`, no redirect, and no transaction cookie. |
 
 The source diff proves the implemented behavior above. It does **not** prove which stage occurred in a real owner callback, nor that either commit was deployed.
+
+**Repository movement during reconciliation:** after the starting observation, `origin/feat/public-opt-in-leaderboard` advanced to `c26bcbb1cd00fb56d4c720a606e73832c65d2e1f` (`fix: add safe OAuth completion diagnostics`), which includes code changes outside this reconciliation scope. This reconciliation did not create, modify, deploy, validate, or otherwise act on those code changes. Its presence is not deployment evidence for any repair revision.
 
 ## Real owner-callback diagnosis
 
