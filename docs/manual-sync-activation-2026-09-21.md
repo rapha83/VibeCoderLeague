@@ -31,11 +31,11 @@ Coverage includes unauthenticated and CSRF rejection, browser-supplied authority
 
 | Item | Result |
 | --- | --- |
-| **Exact deployed source SHA** | `d6da548fd1d6afe2a083b4964359d4b332811095` (`feat: add controlled manual consent sync`) |
+| **Exact deployed source SHA** | `86bf239a54ae464d4f933d2f16a48e0739059292` (`fix: refresh active profile after manual sync` (includes `d6da548` manual-sync delivery)) |
 | **Published branch** | `origin/feat/public-opt-in-leaderboard` |
 | **Target Worker** | `vibecoderleague` |
 | **Origin** | `https://vibecoderleague.grumpzillax.workers.dev` |
-| **Cloudflare version ID** | `6137303b-eaf2-4104-8d44-33488f652d10` |
+| **Cloudflare version ID** | `f654f386-8d29-4c8d-adb1-9cde6c7545bd` |
 | **Deployment command** | `npx wrangler deploy` — PASS; 98.61 KiB / 23.99 KiB gzip |
 | **Cron** | remains absent/off; no `[triggers]` declaration changed |
 | **Anonymous root smoke** | `GET /` → HTTP 200, `text/html` |
