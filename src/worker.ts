@@ -47,6 +47,7 @@ async function consumeMutationRateLimit(c: any, scope: string): Promise<boolean>
 export function createApp() {
   const app = new Hono<{ Bindings: Env }>();
   app.get("/api/auth/github", async c => {
+    try { await key(c.env); } catch { return c.json({ error: "oauth_configuration_invalid", category: "session_encryption" }, 503, { "Cache-Control": "no-store" }); }
     const state = random(), transaction = random(), expiry = new Date(Date.now() + OAUTH_TRANSACTION_MAX_AGE * 1_000).toISOString();
     await c.env.DB.prepare("INSERT INTO oauth_states(state_hash,transaction_hash,expires_at) VALUES(?,?,?)").bind(await hash(state), await hash(transaction), expiry).run();
     setCookie(c, OAUTH_TRANSACTION_COOKIE, transaction, { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: OAUTH_TRANSACTION_MAX_AGE });

@@ -29,6 +29,14 @@ describe("worker OAuth and public profile integration", () => {
     expect(await response.json()).toEqual({ authenticated: false, connectUrl: "/api/auth/github" });
   });
 
+  it("fails OAuth initiation safely when the session encryption configuration is unusable", async () => {
+    const { mf, bindings } = await fixture(); fixtures.push(mf);
+    const response = await request("/api/auth/github", { ...bindings, SESSION_ENCRYPTION_KEY_BASE64: btoa("too-short") });
+    expect(response.status).toBe(503); expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toEqual({ error: "oauth_configuration_invalid", category: "session_encryption" });
+    expect(response.headers.get("Location")).toBeNull(); expect(response.headers.get("Set-Cookie")).toBeNull();
+  });
+
   it("binds OAuth state to a secure browser transaction and consumes it exactly once", async () => {
     const { mf, bindings } = await fixture(); fixtures.push(mf);
     const start = await request("/api/auth/github", bindings);
@@ -75,14 +83,16 @@ describe("worker OAuth and public profile integration", () => {
     {
       const { mf, bindings } = await fixture(); fixtures.push(mf);
       vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "token" })) : new Response(JSON.stringify({ node_id: "u1", login: "octo", avatar_url: null }))));
-      const response = await callback(await begin({ ...bindings, SESSION_ENCRYPTION_KEY_BASE64: btoa("too-short") }));
+      const started = await begin(bindings);
+      const response = await callback({ ...started, bindings: { ...bindings, SESSION_ENCRYPTION_KEY_BASE64: btoa("too-short") } });
       expect(response.status).toBe(502); expect(await response.json()).toEqual({ error: "oauth_completion_failed", stage: "session_encryption" });
     }
     {
       const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
       vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "token" })) : new Response(JSON.stringify({ node_id: "u1", login: "octo", avatar_url: null }))));
+      const started = await begin(bindings);
       const failingDB = { prepare(sql: string) { if (sql.startsWith("INSERT OR REPLACE INTO sessions")) return { bind: () => ({ run: async () => { throw new Error("persistence failure"); } }) }; return DB.prepare(sql); } } as unknown as D1Database;
-      const response = await callback(await begin({ ...bindings, DB: failingDB }));
+      const response = await callback({ ...started, bindings: { ...bindings, DB: failingDB } });
       expect(response.status).toBe(502); expect(await response.json()).toEqual({ error: "oauth_completion_failed", stage: "session_persistence" });
     }
   });
