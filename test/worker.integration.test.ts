@@ -66,35 +66,62 @@ describe("worker OAuth and public profile integration", () => {
     expect(await reused.json()).toEqual({ error: "oauth_state_invalid" });
   });
 
-  it("returns allowlisted stage categories for each completion boundary without exposing exception details", async () => {
+  it("returns safe correlated completion failures for each boundary without exposing sentinels", async () => {
+    const sentinel = "oauth-completion-sentinel";
     const begin = async (bindings: Env) => {
       const start = await request("/api/auth/github", bindings);
       return { bindings, transaction: cookieValue(start, "__Host-vcl-oauth")!, state: new URL(start.headers.get("Location")!).searchParams.get("state")! };
     };
     const callback = ({ bindings, transaction, state }: { bindings: Env; transaction: string; state: string }) => request(`/api/auth/github/callback?state=${state}&code=code`, bindings, { Cookie: transaction });
+    const viewer = { node_id: "u1", login: "octo", avatar_url: null };
+    const completeFetch = vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "token" })) : new Response(JSON.stringify(viewer)));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const assertFailure = async (response: Response, stage: "viewer_lookup" | "token_seal" | "session_persist") => {
+      const completionId = response.headers.get("X-OAuth-Completion-Id");
+      expect(response.status).toBe(502);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(response.headers.get("X-OAuth-Completion-Stage")).toBe(stage);
+      expect(completionId).toMatch(/^[a-f0-9]{64}$/);
+      expect(await response.json()).toEqual({ error: "oauth_completion_failed" });
+      expect(response.headers.getSetCookie()).toContainEqual(expect.stringContaining("__Host-vcl-oauth=;"));
+      expect(response.headers.getSetCookie()).toContainEqual(expect.stringContaining("Max-Age=0"));
+      expect(response.headers.getSetCookie().some(value => value.startsWith("__Host-vcl="))).toBe(false);
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith({ event: "oauth_completion_failed", stage, completionId });
+      expect(error.mock.calls[0]).toHaveLength(1);
+      expect(JSON.stringify({ body: { error: "oauth_completion_failed" }, headers: Array.from(response.headers.entries()), console: error.mock.calls })).not.toContain(sentinel);
+      error.mockClear();
+    };
 
     {
       const { mf, bindings } = await fixture(); fixtures.push(mf);
-      vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "token" })) : new Response("unavailable", { status: 503 })));
+      vi.stubGlobal("fetch", completeFetch);
       const response = await callback(await begin(bindings));
-      expect(response.status).toBe(502); expect(response.headers.get("Cache-Control")).toBe("no-store");
-      expect(await response.json()).toEqual({ error: "oauth_completion_failed", stage: "viewer" });
+      expect(response.status).toBe(302);
+      expect(response.headers.get("X-OAuth-Completion-Id")).toBeNull();
+      expect(response.headers.get("X-OAuth-Completion-Stage")).toBeNull();
+      expect(response.headers.getSetCookie()).toContainEqual(expect.stringContaining("__Host-vcl="));
+      expect(error).not.toHaveBeenCalled();
     }
     {
       const { mf, bindings } = await fixture(); fixtures.push(mf);
-      vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "token" })) : new Response(JSON.stringify({ node_id: "u1", login: "octo", avatar_url: null }))));
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "token" })) : new Response(sentinel, { status: 503 })));
+      await assertFailure(await callback(await begin(bindings)), "viewer_lookup");
+    }
+    {
+      const { mf, bindings } = await fixture(); fixtures.push(mf);
+      vi.stubGlobal("fetch", completeFetch);
       const started = await begin(bindings);
-      const response = await callback({ ...started, bindings: { ...bindings, SESSION_ENCRYPTION_KEY_BASE64: btoa("too-short") } });
-      expect(response.status).toBe(502); expect(await response.json()).toEqual({ error: "oauth_completion_failed", stage: "session_encryption" });
+      await assertFailure(await callback({ ...started, bindings: { ...bindings, SESSION_ENCRYPTION_KEY_BASE64: sentinel } }), "token_seal");
     }
     {
       const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
-      vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "token" })) : new Response(JSON.stringify({ node_id: "u1", login: "octo", avatar_url: null }))));
+      vi.stubGlobal("fetch", completeFetch);
       const started = await begin(bindings);
-      const failingDB = { prepare(sql: string) { if (sql.startsWith("INSERT OR REPLACE INTO sessions")) return { bind: () => ({ run: async () => { throw new Error("persistence failure"); } }) }; return DB.prepare(sql); } } as unknown as D1Database;
-      const response = await callback({ ...started, bindings: { ...bindings, DB: failingDB } });
-      expect(response.status).toBe(502); expect(await response.json()).toEqual({ error: "oauth_completion_failed", stage: "session_persistence" });
+      const failingDB = { prepare(sql: string) { if (sql.startsWith("INSERT OR REPLACE INTO sessions")) return { bind: () => ({ run: async () => { throw new Error(sentinel); } }) }; return DB.prepare(sql); } } as unknown as D1Database;
+      await assertFailure(await callback({ ...started, bindings: { ...bindings, DB: failingDB } }), "session_persist");
     }
+    error.mockRestore();
   });
 
   it("publishes only actively consenting public profiles and profile identifiers", async () => {
