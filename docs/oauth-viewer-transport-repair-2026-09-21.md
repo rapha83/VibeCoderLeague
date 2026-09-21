@@ -37,13 +37,18 @@ Only the default native-fetch path changed. Explicitly injected fetch functions,
 | Worker dry-run package/config inspection | PASS — target `vibecoderleague`; existing D1 binding and exact public origin retained; no Cron trigger added |
 | Independent QA review | PASS — minimal scope and injected-fetch behavior verified independently |
 
-## Source/deployment lineage
+## Deployment and activation
 
-- **Pre-fix parent source SHA:** `71e0a7c04f7f14c56c5d633cccaab12683606ac7`
-- **Fix source SHA:** recorded after the reviewed correction is committed.
-- **Active Worker version before deploy:** `0a04ce62-aede-49a3-8a73-032740e1a0ce`
-- **Deployed Worker version:** recorded only after deployment status confirms the new version receives 100% traffic.
+| Check | Result |
+| --- | --- |
+| Deployment target | PASS — only `vibecoderleague` at the configured Workers URL |
+| Source used for deployment | `029c1440317a3563a91bd0ab972ef4b51a48aade` |
+| Active Worker version | PASS — `c57a064c-49a6-461e-a274-6ad65648c1b1` receives 100% traffic |
+| OAuth initiation | PASS — a single non-followed initiation request returned an HTTP redirect and set a transaction cookie; redirect target, cookie value, and headers were not recorded |
+| D1, secrets, origin, Cron | Preserved — no migration, secret/config update, origin change, or Cron trigger change was performed |
+
+This receipt was updated after deployment. Its documentation-only commit is distinct from the exact source SHA above and was not part of the deployed Worker.
 
 ## Owner next step
 
-After the exact reviewed SHA is deployed and activation is verified, perform **one fresh normal owner login**. Do not send any OAuth URL, authorization code, state, cookie, token, account detail, screenshot containing them, or correlation ID. Report only whether the login completed or the existing safe error category/stage/status if it failed.
+Perform **one fresh normal owner login**. Do not send any OAuth URL, authorization code, state, cookie, token, account detail, screenshot containing them, or correlation ID. Report only whether the login completed or the existing safe error category/stage/status if it failed.
