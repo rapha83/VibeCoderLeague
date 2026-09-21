@@ -58,7 +58,7 @@ The historical receipt records a sanitized HTTP 302 to GitHub with redirects dis
 
 ## Exact next owner action
 
-**First obtain or provide existing post-repair deployment provenance (the active `vibecoderleague` Worker version/script identity mapped to `4287d647`, plus any retained sanitized callback response/log). Do not attempt the owner OAuth callback yet.** Once that provenance establishes `4287d647` is live, a redirects-disabled initiation smoke can be safely scoped according to the preflight result; a real owner login/callback remains required to validate token exchange, viewer lookup, encryption, session persistence, and the final redirect.
+**First obtain or provide existing post-repair deployment provenance (the active `vibecoderleague` Worker version/script identity mapped to `4287d647`, plus any retained sanitized callback response/log). Do not attempt the owner OAuth callback yet.** Deployment provenance alone does not make initiation smoke non-mutating: with usable session encryption, `4287d647` writes an OAuth-state record and issues a transaction cookie before its redirect. A live initiation request remains outside this reconciliation unless pre-existing evidence independently establishes the encryption configuration is unusable; a real owner login/callback remains required to validate token exchange, viewer lookup, encryption, session persistence, and the final redirect.
 
 ## Evidence limits
 
