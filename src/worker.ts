@@ -23,7 +23,13 @@ const MUTATION_RATE_LIMIT = 10, MUTATION_RATE_WINDOW_MS = 60_000;
 const OAUTH_TRANSACTION_COOKIE = "__Host-vcl-oauth", OAUTH_TRANSACTION_MAX_AGE = 10 * 60;
 const clearOAuthTransaction = (c: any) => setCookie(c, OAUTH_TRANSACTION_COOKIE, "", { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 0 });
 
-async function key(env: Env) { return crypto.subtle.importKey("raw", Uint8Array.from(atob(env.SESSION_ENCRYPTION_KEY_BASE64), c => c.charCodeAt(0)), "AES-GCM", false, ["encrypt", "decrypt"]); }
+async function key(env: Env) {
+  if (typeof env.SESSION_ENCRYPTION_KEY_BASE64 !== "string") throw new Error("session_key_invalid");
+  let raw: Uint8Array;
+  try { raw = Uint8Array.from(atob(env.SESSION_ENCRYPTION_KEY_BASE64), c => c.charCodeAt(0)); } catch { throw new Error("session_key_invalid"); }
+  if (raw.byteLength !== 32) throw new Error("session_key_invalid");
+  try { return await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]); } catch { throw new Error("session_key_invalid"); }
+}
 async function seal(env: Env, token: string) { const iv = crypto.getRandomValues(new Uint8Array(12)); const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await key(env), encoder.encode(token)); return `${btoa(String.fromCharCode(...iv))}.${btoa(String.fromCharCode(...new Uint8Array(data)))}`; }
 async function open(env: Env, value: string) { const [a, b] = value.split("."); const data = await crypto.subtle.decrypt({ name: "AES-GCM", iv: Uint8Array.from(atob(a), c => c.charCodeAt(0)) }, await key(env), Uint8Array.from(atob(b), c => c.charCodeAt(0))); return decoder.decode(data); }
 
@@ -55,11 +61,15 @@ export function createApp() {
     const callback = `${c.env.PUBLIC_ORIGIN}/api/auth/github/callback`;
     const exchange = await fetch("https://github.com/login/oauth/access_token", { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ client_id: c.env.GITHUB_APP_CLIENT_ID, client_secret: c.env.GITHUB_APP_CLIENT_SECRET, code, redirect_uri: callback }) });
     const granted = await exchange.json() as { access_token?: string }; if (!exchange.ok || !granted.access_token) { clearOAuthTransaction(c); return c.json({ error: "oauth_exchange_failed" }, 502); }
+    let completionStage = "viewer";
     try {
       const user = await new GitHubClient(granted.access_token).viewer(); const token = random(), timestamp = now();
-      await c.env.DB.prepare("INSERT OR REPLACE INTO sessions(token_hash,github_id,github_login,avatar_url,csrf_token,access_token_ciphertext,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)").bind(await hash(token),user.id,user.login,user.avatarUrl,random(),await seal(c.env,granted.access_token),new Date(Date.now() + 8 * 60 * 60_000).toISOString(),timestamp).run();
+      completionStage = "session_encryption";
+      const ciphertext = await seal(c.env, granted.access_token);
+      completionStage = "session_persistence";
+      await c.env.DB.prepare("INSERT OR REPLACE INTO sessions(token_hash,github_id,github_login,avatar_url,csrf_token,access_token_ciphertext,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)").bind(await hash(token),user.id,user.login,user.avatarUrl,random(),ciphertext,new Date(Date.now() + 8 * 60 * 60_000).toISOString(),timestamp).run();
       clearOAuthTransaction(c); setCookie(c, "__Host-vcl", token, { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 8 * 60 * 60 }); return c.redirect(`${c.env.PUBLIC_ORIGIN}/`);
-    } catch { clearOAuthTransaction(c); return c.json({ error: "oauth_completion_failed" }, 502); }
+    } catch { clearOAuthTransaction(c); return c.json({ error: "oauth_completion_failed", stage: completionStage }, 502, { "Cache-Control": "no-store" }); }
   });
   app.get("/api/rules", c => c.json({ rules: ["Participation is opt-in.", "One merged pull request counts once for its opted-in author in its merged-at UTC month.", "Only currently public, accessible repositories are published.", "Tooling and model declarations are unverified."] }, 200, { "Cache-Control": "public, max-age=300" }));
   app.get("/api/leaderboard", async c => {
