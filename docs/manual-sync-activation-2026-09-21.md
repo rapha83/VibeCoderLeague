@@ -17,8 +17,6 @@ A selection revalidation upsert now also refreshes its `installation_id`, suppor
 
 ## Candidate validation before deployment
 
-Run from the candidate worktree:
-
 | Command | Result |
 | --- | --- |
 | `npm run check` | PASS — TypeScript no-emit |
@@ -31,14 +29,21 @@ Coverage includes unauthenticated and CSRF rejection, browser-supplied authority
 
 ## Deployment record
 
-Populate after deployment with the exact committed source SHA, Cloudflare version ID, target, and post-deployment non-mutating smoke results. A later documentation-only commit, if any, is not the deployed source SHA.
+| Item | Result |
+| --- | --- |
+| **Exact deployed source SHA** | `d6da548fd1d6afe2a083b4964359d4b332811095` (`feat: add controlled manual consent sync`) |
+| **Published branch** | `origin/feat/public-opt-in-leaderboard` |
+| **Target Worker** | `vibecoderleague` |
+| **Origin** | `https://vibecoderleague.grumpzillax.workers.dev` |
+| **Cloudflare version ID** | `6137303b-eaf2-4104-8d44-33488f652d10` |
+| **Deployment command** | `npx wrangler deploy` — PASS; 98.61 KiB / 23.99 KiB gzip |
+| **Cron** | remains absent/off; no `[triggers]` declaration changed |
+| **Anonymous root smoke** | `GET /` → HTTP 200, `text/html` |
+| **Anonymous session smoke** | `GET /api/session` → HTTP 200, `{"authenticated":false,"connectUrl":"/api/auth/github"}` |
+| **Anonymous leaderboard smoke** | `GET /api/leaderboard` → HTTP 200, current month, empty rows |
+| **Anonymous mutation smoke** | `POST /api/sync` → HTTP 401, `{"error":"authentication_required"}` |
 
-- **Target Worker:** `vibecoderleague`
-- **Origin:** `https://vibecoderleague.grumpzillax.workers.dev`
-- **Cron:** remains absent/off
-- **Source SHA:** pending
-- **Cloudflare version ID:** pending
-- **Post-deploy anonymous smoke:** pending
+The smoke checks were read-only except the intentional unauthenticated rejection probe; no production session, consent, selection, sync, or owner data was created. This receipt is included in the deployed source commit; any later receipt-only commit must be distinguished from this deployed SHA.
 
 ## Owner UAT (do not create test data)
 
