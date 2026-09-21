@@ -146,10 +146,11 @@ describe("public leaderboard frontend", () => {
 
   it("posts Sync now with CSRF but no authority fields, then refreshes without re-syncing", async () => {
     let finishSync;
-    const page = boot({ handler: (path) => {
+    const page = boot({ hash: "#/profiles/p1", handler: (path) => {
       if (path.startsWith("/api/leaderboard")) return json({ rows: [] });
       if (path === "/api/rules") return json({ rules: [] });
       if (path === "/api/session") return json({ authenticated: true, csrfToken: "csrf-1", participating: true });
+      if (path === "/api/profiles/p1") return json({ displayName: "Participant", repositories: [], declarations: { status: "self_declared_unverified", tooling: [], models: [] } });
       if (path === "/api/sync") return new Promise(resolve => { finishSync = () => resolve(json({ status: "complete" })); });
       throw new Error(`Unexpected request ${path}`);
     } }); await tick();
@@ -160,7 +161,7 @@ describe("public leaderboard frontend", () => {
     const syncCalls = page.calls.filter(call => call.path === "/api/sync"); expect(syncCalls).toHaveLength(1); expect(syncCalls[0].options.method).toBe("POST"); expect(syncCalls[0].options.headers.get("X-CSRF-Token")).toBe("csrf-1"); expect(syncCalls[0].options.body).toBeUndefined();
     finishSync(); await tick();
     expect(button.disabled).toBe(false); expect(message.textContent).toBe("Sync complete."); expect(message.className).toContain("success");
-    expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(1); expect(page.calls.filter(call => call.path === "/api/session")).toHaveLength(2); expect(page.calls.filter(call => call.path.startsWith("/api/leaderboard"))).toHaveLength(2);
+    expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(1); expect(page.calls.filter(call => call.path === "/api/session")).toHaveLength(2); expect(page.calls.filter(call => call.path.startsWith("/api/leaderboard"))).toHaveLength(2); expect(page.calls.filter(call => call.path === "/api/profiles/p1")).toHaveLength(2);
   });
 
   it("announces no eligible merged PRs, partial results, and a busy sync without automatic retry", async () => {

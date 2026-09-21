@@ -129,7 +129,7 @@
     setButtonBusy(button, true, "Syncing…"); button.setAttribute("aria-busy", "true"); setMessage(message, "Syncing your selected public repository…");
     try {
       const outcome = syncOutcome(await request("/api/sync", { method:"POST" }));
-      await Promise.allSettled([loadSession(), loadLeaderboard()]);
+      const activeProfile = profileRouteFromHash(); await Promise.allSettled([loadSession(), loadLeaderboard(), activeProfile ? loadProfile(activeProfile) : Promise.resolve()]);
       setMessage(message, outcome === "partial" ? "Sync finished with partial results." : outcome === "no_eligible_prs" ? "Sync finished. No eligible merged pull requests were found for your selected public repository." : "Sync complete.", outcome === "success" ? "success" : "");
     } catch (error) { setMessage(message, error.status === 409 && asObject(error.payload).status === "busy" ? "A sync is already running for your selected public repository. Try again shortly." : displayError(error), "error"); }
     finally { button.removeAttribute("aria-busy"); setButtonBusy(button, false, "Sync now"); }
