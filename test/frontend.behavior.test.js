@@ -43,15 +43,15 @@ const anonymous = (path) => {
 describe("public leaderboard frontend", () => {
   it("links a ranking to a public profile and also loads that profile on direct hash entry", async () => {
     const handler = (path) => {
-      if (path.startsWith("/api/leaderboard")) return json({ rows: [{ rank: 1, profileId: "profile/42", displayName: "Ada", repository: "octo/league", score: 8 }] });
-      if (path === "/api/profiles/profile%2F42") return json({ displayName: "Ada", declarations: { status: "self_declared_unverified", tooling: ["Cursor", "Claude Code"], models: ["GPT-4.1", "o3"] } });
+      if (path.startsWith("/api/leaderboard")) return json({ month: "2025-01", rows: [{ rank: 1, profileId: "profile/42", displayName: "Ada", repository: "octo/league", score: 8 }] });
+      if (path === "/api/profiles/profile%2F42?month=2025-01" || path === "/api/profiles/profile%2F42") return json({ month: "2025-01", displayName: "Ada", declarations: { status: "self_declared_unverified", tooling: ["Cursor", "Claude Code"], models: ["GPT-4.1", "o3"] } });
       return anonymous(path);
     };
     const first = boot({ handler }); await tick();
     const participant = first.document.querySelector("#leaderboard-body a");
-    expect(participant?.textContent).toBe("Ada"); expect(participant?.getAttribute("href")).toBe("#/profiles/profile%2F42");
+    expect(participant?.textContent).toBe("Ada"); expect(participant?.getAttribute("href")).toBe("#/profiles/profile%2F42?month=2025-01");
     first.window.location.hash = participant.getAttribute("href"); first.window.dispatchEvent(new first.window.HashChangeEvent("hashchange")); await tick();
-    expect(first.document.querySelector("#profile").hidden).toBe(false);
+    expect(first.calls.some(call => call.path === "/api/profiles/profile%2F42?month=2025-01")).toBe(true);
     const profileText = first.document.querySelector("#profile-content").textContent;
     expect(profileText).toContain("Cursor, Claude Code");
     expect(profileText).toContain("GPT-4.1, o3");
@@ -61,6 +61,23 @@ describe("public leaderboard frontend", () => {
     const direct = boot({ hash: "#/profiles/profile%2F42", handler }); await tick();
     expect(direct.calls.some(call => call.path === "/api/profiles/profile%2F42")).toBe(true);
     expect(direct.document.querySelector("#profile-content h2")?.textContent).toBe("Ada");
+  });
+
+  it("renders repository and PR totals from the profile schema, including zeroes, and uses the leaderboard response month", async () => {
+    const handler = (path) => {
+      if (path.startsWith("/api/leaderboard")) return json({ month: "2025-02", rows: [{ rank: 1, profileId: "counted", displayName: "Counted", repository: "octo/public", score: 7 }] });
+      if (path === "/api/profiles/counted") return json({ id: "counted", month: "2025-02", displayName: "Counted", repositories: [{ repository: "octo/public", pullRequests: 0 }, { repository: "octo/other-public", pullRequests: 7 }], declarations: { status: "self_declared_unverified", tooling: [], models: [] } });
+      if (path === "/api/profiles/zero") return json({ id: "zero", month: "2025-02", displayName: "Zero", repositories: [], declarations: { status: "self_declared_unverified", tooling: [], models: [] } });
+      return anonymous(path);
+    };
+
+    const counted = boot({ hash: "#/profiles/counted", handler }); await tick();
+    expect(counted.document.querySelector("#leaderboard-status").textContent).toContain("2025-02");
+    expect([...counted.document.querySelectorAll("#profile-content .profile-stats dd")].map(value => value.textContent)).toEqual(["2", "7"]);
+    expect([...counted.document.querySelectorAll("#profile-content .profile-stats dt")].map(value => value.textContent)).toEqual(["Published repositories", "Merged pull requests in 2025-02"]);
+
+    const zero = boot({ hash: "#/profiles/zero", handler }); await tick();
+    expect([...zero.document.querySelectorAll("#profile-content .profile-stats dd")].map(value => value.textContent)).toEqual(["0", "0"]);
   });
 
   it("renders leaderboard loading, empty, error, and retry states", async () => {

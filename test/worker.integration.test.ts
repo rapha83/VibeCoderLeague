@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { Miniflare } from "miniflare";
-import { createApp, type Env } from "../src/worker";
+import { createApp, runScheduledSync, syncConsent, SyncWorkBudget, type Env } from "../src/worker";
 
 const migration = (name: string) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8");
 const origin = "https://league.example";
@@ -55,17 +55,80 @@ describe("worker OAuth and public profile integration", () => {
     await DB.batch([
       DB.prepare("INSERT INTO participants(github_id,github_login,display_name,public_profile_id,consent_active,updated_at) VALUES('u1','octo','Octo','profile-1',1,'2025-01-01T00:00:00Z'),('u2','hidden','Hidden','profile-2',0,'2025-01-01T00:00:00Z'),('u3','private','Private','profile-3',1,'2025-01-01T00:00:00Z')"),
       DB.prepare("INSERT INTO consents(github_id,repo_id,repo_name,installation_id,visibility,declared_tooling,declared_model,active,updated_at) VALUES('u1','r1','octo/public','i1','public','Cursor','Model A',1,'2025-01-01T00:00:00Z'),('u1','r4','octo/other-public','i4','public','Cursor','Model B',1,'2025-01-01T00:00:00Z'),('u1','r5','octo/private','i5','private','Private Tool','Private Model',1,'2025-01-01T00:00:00Z'),('u2','r2','hidden/public','i2','public','Hidden Tool','Hidden Model',1,'2025-01-01T00:00:00Z'),('u3','r3','private/private','i3','private','Private Tool','Private Model',1,'2025-01-01T00:00:00Z')"),
-      DB.prepare("INSERT INTO pull_requests(pr_id,repo_id,repo_name,author_id,author_login,merged_at,month_utc,generation) VALUES('pr1','r1','octo/public','u1','octo','2025-01-10T00:00:00Z','2025-01',1),('pr2','r2','hidden/public','u2','hidden','2025-01-10T00:00:00Z','2025-01',1),('pr3','r3','private/private','u3','private','2025-01-10T00:00:00Z','2025-01',1)")
+      DB.prepare("INSERT INTO pull_requests(pr_id,repo_id,repo_name,author_id,author_login,merged_at,month_utc,generation) VALUES('pr1','r1','octo/public','u1','octo','2025-01-10T00:00:00Z','2025-01',1),('pr4','r4','octo/other-public','u1','octo','2025-02-01T00:00:00Z','2025-02',1),('pr2','r2','hidden/public','u2','hidden','2025-01-10T00:00:00Z','2025-01',1),('pr3','r3','private/private','u3','private','2025-01-10T00:00:00Z','2025-01',1)")
     ]);
     const leaderboard = await request("/api/leaderboard?month=2025-01", bindings);
     expect(await leaderboard.json()).toEqual({ month: "2025-01", rows: [{ rank: 1, profileId: "profile-1", displayName: "Octo", repository: "octo/public", score: 1 }] });
-    const profile = await request("/api/profiles/profile-1", bindings);
+    const profile = await request("/api/profiles/profile-1?month=2025-01", bindings);
     expect(profile.headers.get("Cache-Control")).toBe("no-store");
-    expect(await profile.json()).toEqual({ id: "profile-1", displayName: "Octo", repositories: [{ repository: "octo/public", pullRequests: 1 }], declarations: { status: "self_declared_unverified", tooling: ["Cursor"], models: ["Model A", "Model B"] } });
+    expect(await profile.json()).toEqual({ id: "profile-1", displayName: "Octo", month: "2025-01", repositories: [{ repository: "octo/public", pullRequests: 1 }], declarations: { status: "self_declared_unverified", tooling: ["Cursor"], models: ["Model A", "Model B"] } });
+    const februaryProfile = await request("/api/profiles/profile-1?month=2025-02", bindings);
+    expect(await februaryProfile.json()).toMatchObject({ month: "2025-02", repositories: [{ repository: "octo/other-public", pullRequests: 1 }] });
+    const invalidProfileMonth = await request("/api/profiles/profile-1?month=2025-13", bindings);
+    expect(invalidProfileMonth.status).toBe(400);
+    expect(invalidProfileMonth.headers.get("Cache-Control")).toBe("no-store");
+    expect(await invalidProfileMonth.json()).toEqual({ error: "invalid_month" });
     for (const id of ["profile-2", "profile-3", "unknown"]) {
       const response = await request(`/api/profiles/${id}`, bindings);
       expect(response.status).toBe(404);
       expect(response.headers.get("Cache-Control")).toBe("no-store");
     }
+  });
+});
+
+describe("scheduled sync budget integration", () => {
+  const fixtures: Miniflare[] = [];
+  afterEach(async () => { await Promise.all(fixtures.splice(0).map(mf => mf.dispose())); vi.unstubAllGlobals(); });
+  const addConsents = async (DB: D1Database, ids: string[]) => DB.prepare(`INSERT INTO consents(github_id,repo_id,repo_name,installation_id,visibility,active,updated_at) VALUES ${ids.map(() => "(?,?,?,?, 'public',1,?)").join(",")}`).bind(...ids.flatMap((id, index) => [id, `r-${id}`, `octo/${id}`, `i-${id}`, `2025-01-0${index + 1}T00:00:00Z`])).run();
+
+  it("uses one sequential budget across a cohort and defers the remaining consents to later runs", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    await addConsents(DB, ["u1", "u2", "u3", "u4"]);
+    const calls: string[] = [], sync = async (_: Env, consent: { github_id: string }, _token: string, _pages: number, budget?: SyncWorkBudget) => { calls.push(consent.github_id); expect(budget?.tryConsume()).toBe(true); await DB.prepare("UPDATE consents SET updated_at=? WHERE github_id=?").bind(`2025-02-0${calls.length}T00:00:00Z`, consent.github_id).run(); };
+    const mint = async (_app: string, _key: string, installation: string) => { calls.push(`token:${installation}`); return "token"; };
+    await runScheduledSync(bindings, { budget: new SyncWorkBudget(4), mintToken: mint, sync });
+    expect(calls).toEqual(["token:i-u1", "u1", "token:i-u2", "u2"]);
+    await runScheduledSync(bindings, { budget: new SyncWorkBudget(4), mintToken: mint, sync });
+    expect(calls.slice(4)).toEqual(["token:i-u3", "u3", "token:i-u4", "u4"]);
+  });
+
+  it("charges failures, continues sequentially, and marks only the failed consent unknown", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    await addConsents(DB, ["u1", "u2", "u3"]);
+    const synced: string[] = [], mint = async (_app: string, _key: string, installation: string) => { if (installation === "i-u1") throw new Error("github_500"); return "token"; };
+    const sync = async (_: Env, consent: { github_id: string }, _token: string, _pages: number, budget?: SyncWorkBudget) => { synced.push(consent.github_id); expect(budget?.tryConsume()).toBe(true); };
+    await runScheduledSync(bindings, { budget: new SyncWorkBudget(4), mintToken: mint, sync });
+    expect(synced).toEqual(["u2"]);
+    expect(await DB.prepare("SELECT visibility FROM consents WHERE github_id='u1'").first()).toEqual({ visibility: "unknown" });
+    expect(await DB.prepare("SELECT visibility FROM consents WHERE github_id='u3'").first()).toEqual({ visibility: "public" });
+  });
+
+  it("persists a cursor and clears its lease when the shared budget exhausts, then resumes on the next run", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    await addConsents(DB, ["u1"]);
+    await DB.prepare("INSERT INTO participants(github_id,github_login,display_name,consent_active,updated_at) VALUES('u1','octo','Octo',1,'2025-01-01T00:00:00Z')").run();
+    const cursors: Array<string | null> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      const after = (JSON.parse(String(init?.body)).variables.after ?? null) as string | null; cursors.push(after);
+      const first = after === null;
+      return new Response(JSON.stringify({ data: { repository: { visibility: "PUBLIC", pullRequests: { nodes: [], pageInfo: { endCursor: first ? "cursor-1" : null, hasNextPage: first } } } } }));
+    }));
+    const consent = { github_id: "u1", repo_id: "r-u1", repo_name: "octo/u1", installation_id: "i-u1", declared_tooling: null, declared_model: null };
+    await syncConsent(bindings, consent, "token", 2, new SyncWorkBudget(1));
+    expect(await DB.prepare("SELECT cursor,status,lease_token,lease_until FROM sync_jobs WHERE github_id='u1' AND repo_id='r-u1'").first()).toEqual({ cursor: "cursor-1", status: "partial", lease_token: null, lease_until: null });
+    await syncConsent(bindings, consent, "token", 2, new SyncWorkBudget(1));
+    expect(cursors).toEqual([null, "cursor-1"]);
+    expect(await DB.prepare("SELECT cursor,status,lease_token,lease_until FROM sync_jobs WHERE github_id='u1' AND repo_id='r-u1'").first()).toEqual({ cursor: null, status: "complete", lease_token: null, lease_until: null });
+  });
+
+  it("charges a failed page attempt and releases its lease so a later run can retry safely", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    await addConsents(DB, ["u1"]);
+    const consent = { github_id: "u1", repo_id: "r-u1", repo_name: "octo/u1", installation_id: "i-u1", declared_tooling: null, declared_model: null };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
+    const budget = new SyncWorkBudget(1);
+    await expect(syncConsent(bindings, consent, "token", 2, budget)).rejects.toThrow("github_503");
+    expect(budget.remaining).toBe(0);
+    expect(await DB.prepare("SELECT cursor,status,lease_token,lease_until FROM sync_jobs WHERE github_id='u1' AND repo_id='r-u1'").first()).toEqual({ cursor: null, status: "partial", lease_token: null, lease_until: null });
   });
 });

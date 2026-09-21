@@ -22,8 +22,10 @@
   function setButtonBusy(button, busy, text) { button.disabled = busy; if (text) button.textContent = text; }
   function displayError(error) { return error instanceof Error && error.message ? error.message : "The request could not be completed."; }
 
-  function profilePath(profileId) { return `#/profiles/${encodeURIComponent(profileId)}`; }
-  function profileIdFromHash() { const match = /^#\/profiles\/([^/?#]+)$/.exec(window.location.hash); return match ? decodeURIComponent(match[1]) : null; }
+  function isUtcMonth(value) { return /^\d{4}-(?:0[1-9]|1[0-2])$/.test(value); }
+  function profilePath(profileId, month) { const query = isUtcMonth(month) ? `?month=${encodeURIComponent(month)}` : ""; return `#/profiles/${encodeURIComponent(profileId)}${query}`; }
+  function profileRouteFromHash() { const match = /^#\/profiles\/([^/?#]+)(?:\?([^#]*))?$/.exec(window.location.hash); if (!match) return null; const params = new URLSearchParams(match[2] || ""); const month = params.get("month"); return { id: decodeURIComponent(match[1]), month: isUtcMonth(month || "") ? month : null }; }
+  function profileIdFromHash() { return profileRouteFromHash()?.id || null; }
   function repoOption(label, value) { const option = document.createElement("option"); option.textContent = label; option.value = value; return option; }
   function handleUnauthorized() { ++state.sessionRequest; state.csrfToken = null; state.session = null; form.hidden = true; $("#withdrawal-panel").hidden = true; repoSelect.disabled = true; repoSelect.replaceChildren(repoOption("Choose a repository", "")); setMessage(sessionStatus, "Your session expired. Reconnect GitHub to continue.", "error"); showConnect({ connectUrl: "/api/auth/github" }); }
 
@@ -39,7 +41,7 @@
     return data;
   }
 
-  function row(data, cells, className = "", profileId = null) { const tr = document.createElement("tr"); if (className) tr.className = className; cells.forEach((value, index) => { const td = document.createElement("td"); if (index === 1 && profileId) { const link = document.createElement("a"); link.href = profilePath(profileId); link.textContent = value; td.append(link); } else td.textContent = value; tr.append(td); }); data.append(tr); }
+  function row(data, cells, className = "", profileId = null, month = null) { const tr = document.createElement("tr"); if (className) tr.className = className; cells.forEach((value, index) => { const td = document.createElement("td"); if (index === 1 && profileId) { const link = document.createElement("a"); link.href = profilePath(profileId, month); link.textContent = value; td.append(link); } else td.textContent = value; tr.append(td); }); data.append(tr); }
   function itemList(value) { return Array.isArray(value) ? value : []; }
   function leaderboardRows(payload) { const source = asObject(payload); return Array.isArray(payload) ? payload : itemList(source.rows || source.entries || source.leaderboard); }
 
@@ -50,13 +52,14 @@
       const payload = await request(`/api/leaderboard?month=${encodeURIComponent(monthInput.value)}`);
       if (requestId !== state.leaderboardRequest) return;
       const rows = leaderboardRows(payload);
+      const returnedMonth = asText(asObject(payload).month, monthInput.value);
       if (!rows.length) {
         row(leaderboardBody, ["", "No opted-in participants yet for this month.", "", ""]);
-        setMessage(leaderboardStatus, "No opted-in participants are published for this month.");
+        setMessage(leaderboardStatus, `No opted-in participants are published for ${returnedMonth}.`);
         return;
       }
-      rows.forEach((item, index) => { const entry = asObject(item); row(leaderboardBody, [asText(entry.rank, String(index + 1)), asText(entry.displayName), asText(entry.repository), asText(entry.score)], "leaderboard-entry", typeof entry.profileId === "string" ? entry.profileId : null); });
-      setMessage(leaderboardStatus, `${rows.length} opted-in participant${rows.length === 1 ? "" : "s"} published for ${monthInput.value}.`);
+      rows.forEach((item, index) => { const entry = asObject(item); row(leaderboardBody, [asText(entry.rank, String(index + 1)), asText(entry.displayName), asText(entry.repository), asText(entry.score)], "leaderboard-entry", typeof entry.profileId === "string" ? entry.profileId : null, returnedMonth); });
+      setMessage(leaderboardStatus, `${rows.length} opted-in participant${rows.length === 1 ? "" : "s"} published for ${returnedMonth}.`);
     } catch (error) {
       if (requestId !== state.leaderboardRequest) return;
       row(leaderboardBody, ["", "Leaderboard unavailable.", "", ""]);
@@ -65,8 +68,9 @@
   }
 
   function declaredDetails(label, values) { const declarations = itemList(values).filter(value => typeof value === "string" && value.trim()); if (!declarations.length) return null; const item = document.createElement("p"); const strong = document.createElement("strong"); const qualifier = document.createElement("span"); strong.textContent = `${label}: `; qualifier.className = "unverified"; qualifier.textContent = "self-declared — unverified"; item.append(strong, declarations.join(", "), " ", qualifier); return item; }
-  async function loadProfile(profileId) { const requestId = ++state.profileRequest; profileSection.hidden = false; profileContent.replaceChildren(); setMessage(profileStatus, "Loading public profile…"); $("#profile-retry").hidden = true; try { const payload = asObject(await request(`/api/profiles/${encodeURIComponent(profileId)}`)); if (requestId !== state.profileRequest || profileId !== profileIdFromHash()) return; const profile = asObject(payload.profile || payload); const declarations = asObject(profile.declarations); const heading = document.createElement("h2"); heading.id = "profile-title"; heading.textContent = asText(profile.displayName, "Participant"); const copy = document.createElement("p"); copy.textContent = "This public profile shows only the participant's published, self-declared details."; profileContent.append(heading, copy); const tooling = declarations.status === "self_declared_unverified" ? declaredDetails("Tooling", declarations.tooling) : null; const models = declarations.status === "self_declared_unverified" ? declaredDetails("Models", declarations.models) : null; if (tooling) profileContent.append(tooling); if (models) profileContent.append(models); if (!tooling && !models) { const empty = document.createElement("p"); empty.textContent = "No self-declared tooling or model details were provided."; profileContent.append(empty); } setMessage(profileStatus, ""); } catch (error) { if (requestId !== state.profileRequest) return; setMessage(profileStatus, displayError(error), "error"); $("#profile-retry").hidden = false; } }
-  function route() { const profileId = profileIdFromHash(); if (!profileId) { ++state.profileRequest; profileSection.hidden = true; return; } loadProfile(profileId); }
+  function profileSummary(repositories, month) { const stats = document.createElement("dl"); stats.className = "profile-stats"; const pullRequestCount = repositories.reduce((total, repository) => { const count = asObject(repository).pullRequests; return typeof count === "number" && Number.isFinite(count) ? total + count : total; }, 0); [["Published repositories", repositories.length], [`Merged pull requests${isUtcMonth(month) ? ` in ${month}` : ""}`, pullRequestCount]].forEach(([label, value]) => { const item = document.createElement("div"); const term = document.createElement("dt"); const definition = document.createElement("dd"); term.textContent = label; definition.textContent = String(value); item.append(term, definition); stats.append(item); }); return stats; }
+  async function loadProfile(route) { const { id: profileId, month } = route; const requestId = ++state.profileRequest; profileSection.hidden = false; profileContent.replaceChildren(); setMessage(profileStatus, "Loading public profile…"); $("#profile-retry").hidden = true; const query = month ? `?month=${encodeURIComponent(month)}` : ""; try { const payload = asObject(await request(`/api/profiles/${encodeURIComponent(profileId)}${query}`)); if (requestId !== state.profileRequest || profileId !== profileIdFromHash()) return; const profile = asObject(payload.profile || payload); const responseMonth = asText(profile.month, ""); const repositories = itemList(profile.repositories); const declarations = asObject(profile.declarations); const heading = document.createElement("h2"); heading.id = "profile-title"; heading.textContent = asText(profile.displayName, "Participant"); const copy = document.createElement("p"); copy.textContent = "This public profile shows only the participant's published, self-declared details."; profileContent.append(heading, copy, profileSummary(repositories, responseMonth)); const tooling = declarations.status === "self_declared_unverified" ? declaredDetails("Tooling", declarations.tooling) : null; const models = declarations.status === "self_declared_unverified" ? declaredDetails("Models", declarations.models) : null; if (tooling) profileContent.append(tooling); if (models) profileContent.append(models); if (!tooling && !models) { const empty = document.createElement("p"); empty.textContent = "No self-declared tooling or model details were provided."; profileContent.append(empty); } setMessage(profileStatus, ""); } catch (error) { if (requestId !== state.profileRequest) return; setMessage(profileStatus, displayError(error), "error"); $("#profile-retry").hidden = false; } }
+  function route() { const profileRoute = profileRouteFromHash(); if (!profileRoute) { ++state.profileRequest; profileSection.hidden = true; return; } loadProfile(profileRoute); }
 
   async function loadRules() {
     const content = $("#rules-content"); content.replaceChildren(); setMessage(rulesStatus, "Loading rules…"); $("#rules-retry").hidden = true;

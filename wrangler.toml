@@ -10,7 +10,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "vibe-coder-league"
-database_id = "replace-with-d1-database-id"
+database_id = "a5fcb38c-026a-4bd3-9f93-a2822cf067b4"
 
-[triggers]
-crons = ["*/15 * * * *"]
+# Deliberately no [triggers] cron: it is enabled only after a real GitHub-App
+# authorization, consent, and public-repository sync journey has succeeded.
