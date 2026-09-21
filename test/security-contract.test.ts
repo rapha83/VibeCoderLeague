@@ -156,7 +156,7 @@ describe("publication safety contract", () => {
     expect(worker.indexOf(restore)).toBeLessThan(worker.indexOf("INSERT INTO pull_requests"));
     expect(worker).toContain("UPDATE consents SET visibility='unknown',updated_at=? WHERE github_id=? AND repo_id=? AND active=1");
     expect(worker).toContain('error.message === "repo_inaccessible"');
-    expect(worker).toContain("await retract(); return;");
+    expect(worker).toContain("return retract();");
   });
   it("uses one generation for a partial traversal and advances only when starting a new traversal", () => {
     const worker = readRepositoryFile("../src/worker.ts");

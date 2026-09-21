@@ -153,6 +153,127 @@ describe("worker OAuth and public profile integration", () => {
   });
 });
 
+describe("manual post-consent sync integration", () => {
+  const fixtures: Miniflare[] = [];
+  afterEach(async () => { await Promise.all(fixtures.splice(0).map(mf => mf.dispose())); vi.unstubAllGlobals(); });
+
+  const signIn = async (bindings: Env, githubId = "u1") => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "user-token" })) : new Response(JSON.stringify({ node_id: githubId, login: "octo", avatar_url: null }))));
+    const start = await request("/api/auth/github", bindings);
+    const transaction = cookieValue(start, "__Host-vcl-oauth")!;
+    const state = new URL(start.headers.get("Location")!).searchParams.get("state")!;
+    const completed = await request(`/api/auth/github/callback?state=${state}&code=code`, bindings, { Cookie: transaction });
+    const cookie = cookieValue(completed, "__Host-vcl")!;
+    const snapshot = await request("/api/session", bindings, { Cookie: cookie });
+    return { cookie, csrfToken: (await snapshot.json() as { csrfToken: string }).csrfToken };
+  };
+  const syncRequest = (bindings: Env, auth: { cookie: string; csrfToken: string }, options: Parameters<typeof createApp>[0] = {}) => createApp(options).request(`${origin}/api/sync`, { method: "POST", headers: { Cookie: auth.cookie, Origin: origin, "X-CSRF-Token": auth.csrfToken, "Content-Type": "application/json" }, body: JSON.stringify({ github_id: "attacker", repo_id: "attacker-repo", installation_id: "attacker-installation", model: "attacker-model" }) }, bindings);
+  const selected = (DB: D1Database, githubId = "u1", installationId = "i1") => DB.batch([
+    DB.prepare("INSERT INTO participants(github_id,github_login,display_name,consent_active,updated_at) VALUES(?,?,?,1,?)").bind(githubId, "octo", "Octo", "2025-01-01T00:00:00Z"),
+    DB.prepare("INSERT INTO consents(github_id,repo_id,repo_name,installation_id,visibility,active,updated_at) VALUES(?,?,?,?, 'public',1,?)").bind(githubId, "r1", "octo/public", installationId, "2025-01-01T00:00:00Z")
+  ]);
+  const accessibleFetch = (pulls: unknown[] = [], visibility = "PUBLIC") => vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/user/installations")) return new Response(JSON.stringify({ installations: [{ id: 42 }] }));
+    if (url.includes("/repositories")) return new Response(JSON.stringify({ repositories: [{ node_id: "r1", full_name: "octo/public", private: false }] }));
+    if (url.endsWith("/graphql")) {
+      const query = JSON.parse(String(init?.body)).query as string;
+      if (query.includes("query Repo")) return new Response(JSON.stringify({ data: { repository: { id: "r1", nameWithOwner: "octo/public", visibility } } }));
+      return new Response(JSON.stringify({ data: { repository: { visibility, pullRequests: { nodes: pulls, pageInfo: { endCursor: null, hasNextPage: false } } } } }));
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  });
+
+  it("rejects unauthenticated and CSRF-invalid requests before any GitHub or sync work", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    expect((await createApp().request(`${origin}/api/sync`, { method: "POST" }, bindings)).status).toBe(401);
+    const auth = await signIn(bindings);
+    vi.stubGlobal("fetch", fetcher);
+    expect((await createApp().request(`${origin}/api/sync`, { method: "POST", headers: { Cookie: auth.cookie, Origin: origin } }, bindings)).status).toBe(403);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect((await DB.prepare("SELECT COUNT(*) count FROM sync_jobs").first<{ count: number }>())?.count).toBe(0);
+  });
+
+  it("fails closed when consent is withdrawn or the selected repository is no longer accessible/public", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings); await selected(DB);
+    await DB.prepare("UPDATE participants SET consent_active=0 WHERE github_id='u1'").run();
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    expect((await syncRequest(bindings, auth, { mintToken: vi.fn() })).status).toBe(409);
+    expect(fetcher).not.toHaveBeenCalled();
+    await DB.prepare("UPDATE participants SET consent_active=1 WHERE github_id='u1'").run();
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/user/installations") ? new Response(JSON.stringify({ installations: [] })) : (() => { throw new Error(`unexpected fetch ${url}`); })()));
+    expect((await syncRequest(bindings, auth, { mintToken: vi.fn() })).status).toBe(409);
+    vi.stubGlobal("fetch", accessibleFetch([], "PRIVATE"));
+    expect((await syncRequest(bindings, auth, { mintToken: vi.fn() })).status).toBe(409);
+    expect((await DB.prepare("SELECT COUNT(*) count FROM sync_jobs").first<{ count: number }>())?.count).toBe(0);
+  });
+
+  it("uses only the session user's selected consent and shared cursor/deduplication path", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings); await selected(DB); await selected(DB, "u2", "i2");
+    const pulls = [{ id: "pr-1", mergedAt: "2025-01-10T00:00:00Z", author: { id: "u1", login: "octo" } }];
+    vi.stubGlobal("fetch", accessibleFetch(pulls));
+    const mintToken = vi.fn(async () => "installation-token");
+    expect(await (await syncRequest(bindings, auth, { mintToken })).json()).toEqual({ status: "complete" });
+    expect(await (await syncRequest(bindings, auth, { mintToken })).json()).toEqual({ status: "complete" });
+    expect(mintToken).toHaveBeenCalledWith("app", "key", "42");
+    expect((await DB.prepare("SELECT COUNT(*) count FROM pull_requests WHERE author_id='u1'").first<{ count: number }>())?.count).toBe(1);
+    expect((await DB.prepare("SELECT COUNT(*) count FROM pull_requests WHERE author_id='u2'").first<{ count: number }>())?.count).toBe(0);
+    expect(await DB.prepare("SELECT cursor,status,lease_token,lease_until FROM sync_jobs WHERE github_id='u1' AND repo_id='r1'").first()).toEqual({ cursor: null, status: "complete", lease_token: null, lease_until: null });
+  });
+
+  it("completes a no-PR manual sync without creating contributions", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings); await selected(DB);
+    vi.stubGlobal("fetch", accessibleFetch());
+    const response = await syncRequest(bindings, auth, { mintToken: vi.fn(async () => "installation-token") });
+    expect(await response.json()).toEqual({ status: "no_eligible_prs" });
+    expect((await DB.prepare("SELECT COUNT(*) count FROM pull_requests").first<{ count: number }>())?.count).toBe(0);
+    expect(await DB.prepare("SELECT cursor,status FROM sync_jobs WHERE github_id='u1' AND repo_id='r1'").first()).toEqual({ cursor: null, status: "complete" });
+  });
+
+  it("returns only sanitized busy, partial, and failure state", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings); await selected(DB);
+    vi.stubGlobal("fetch", accessibleFetch());
+    expect(await (await syncRequest(bindings, auth, { mintToken: vi.fn(async () => "token"), sync: vi.fn(async () => ({ status: "busy" as const })) })).json()).toEqual({ status: "busy" });
+    expect(await (await syncRequest(bindings, auth, { mintToken: vi.fn(async () => "token"), sync: vi.fn(async () => ({ status: "partial" as const })) })).json()).toEqual({ status: "partial" });
+    const failed = await syncRequest(bindings, auth, { mintToken: vi.fn(async () => { throw new Error("upstream secret sentinel"); }) });
+    expect(failed.status).toBe(503);
+    expect(await failed.json()).toEqual({ error: "sync_unavailable", category: "upstream_or_persistence" });
+  });
+
+  it("refreshes the server-verified installation ID on selection after a reinstall without duplicating consent or cursor", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings); await selected(DB, "u1", "old-installation");
+    await DB.prepare("INSERT INTO sync_jobs(github_id,repo_id,cursor,generation,status,pages_processed) VALUES('u1','r1','cursor-1',3,'partial',1)").run();
+    vi.stubGlobal("fetch", accessibleFetch());
+    const response = await createApp().request(`${origin}/api/selections`, { method: "POST", headers: { Cookie: auth.cookie, Origin: origin, "X-CSRF-Token": auth.csrfToken, "Content-Type": "application/json" }, body: JSON.stringify({ consent: true, repoId: "r1" }) }, bindings);
+    expect(response.status).toBe(201);
+    expect(await DB.prepare("SELECT installation_id,active FROM consents WHERE github_id='u1' AND repo_id='r1'").first()).toEqual({ installation_id: "42", active: 1 });
+    expect((await DB.prepare("SELECT COUNT(*) count FROM consents WHERE github_id='u1' AND repo_id='r1'").first<{ count: number }>())?.count).toBe(1);
+    expect(await DB.prepare("SELECT cursor,generation FROM sync_jobs WHERE github_id='u1' AND repo_id='r1'").first()).toEqual({ cursor: "cursor-1", generation: 3 });
+  });
+
+  it("makes a newly selected repository the user's sole active consent and retracts obsolete contributions", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings); await selected(DB);
+    await DB.prepare("INSERT INTO pull_requests(pr_id,repo_id,repo_name,author_id,author_login,merged_at,month_utc,generation) VALUES('pr-old','r1','octo/public','u1','octo','2025-01-10T00:00:00Z','2025-01',1)").run();
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/user/installations")) return new Response(JSON.stringify({ installations: [{ id: 84 }] }));
+      if (url.includes("/repositories")) return new Response(JSON.stringify({ repositories: [{ node_id: "r2", full_name: "octo/next-public", private: false }] }));
+      if (url.endsWith("/graphql")) return new Response(JSON.stringify({ data: { repository: { id: "r2", nameWithOwner: "octo/next-public", visibility: "PUBLIC" } } }));
+      throw new Error(`unexpected fetch ${url} ${String(init?.body)}`);
+    }));
+    const response = await createApp().request(`${origin}/api/selections`, { method: "POST", headers: { Cookie: auth.cookie, Origin: origin, "X-CSRF-Token": auth.csrfToken, "Content-Type": "application/json" }, body: JSON.stringify({ consent: true, repoId: "r2" }) }, bindings);
+    expect(response.status).toBe(201);
+    expect((await DB.prepare("SELECT repo_id,active FROM consents WHERE github_id='u1' ORDER BY repo_id").all()).results).toEqual([{ repo_id: "r1", active: 0 }, { repo_id: "r2", active: 1 }]);
+    expect((await DB.prepare("SELECT COUNT(*) count FROM consents WHERE github_id='u1' AND active=1").first<{ count: number }>())?.count).toBe(1);
+    expect((await DB.prepare("SELECT COUNT(*) count FROM pull_requests WHERE author_id='u1'").first<{ count: number }>())?.count).toBe(0);
+  });
+});
+
 describe("scheduled sync budget integration", () => {
   const fixtures: Miniflare[] = [];
   afterEach(async () => { await Promise.all(fixtures.splice(0).map(mf => mf.dispose())); vi.unstubAllGlobals(); });
@@ -201,6 +322,7 @@ describe("scheduled sync budget integration", () => {
   it("charges a failed page attempt and releases its lease so a later run can retry safely", async () => {
     const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
     await addConsents(DB, ["u1"]);
+    await DB.prepare("INSERT INTO participants(github_id,github_login,display_name,consent_active,updated_at) VALUES('u1','octo','Octo',1,'2025-01-01T00:00:00Z')").run();
     const consent = { github_id: "u1", repo_id: "r-u1", repo_name: "octo/u1", installation_id: "i-u1", declared_tooling: null, declared_model: null };
     vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
     const budget = new SyncWorkBudget(1);

@@ -37,7 +37,7 @@
     const response = await requestFetch(path, { credentials: "same-origin", ...options, headers });
     const contentType = response.headers.get("content-type") || "";
     const data = contentType.includes("application/json") ? await response.json().catch(() => null) : null;
-    if (!response.ok) { if (response.status === 401) handleUnauthorized(); const error = new Error(asText(asObject(data).message || asObject(data).error, `Request failed (${response.status}).`)); error.status = response.status; throw error; }
+    if (!response.ok) { if (response.status === 401) handleUnauthorized(); const error = new Error(asText(asObject(data).message || asObject(data).error, `Request failed (${response.status}).`)); error.status = response.status; error.payload = asObject(data); throw error; }
     return data;
   }
 
@@ -85,6 +85,7 @@
 
   function sessionIsAuthenticated(session) { return session.authenticated === true || Boolean(session.user || session.githubUser); }
   function participating(session) { return session.participating === true || session.hasConsent === true || Boolean(session.consent && session.consent.active !== false); }
+  function syncOutcome(payload) { const result = asObject(payload); const status = asText(result.status || result.outcome || result.result, "").toLowerCase(); if (status === "no_eligible_prs") return "no_eligible_prs"; return result.partial === true || result.complete === false || status === "partial" || status === "incomplete" ? "partial" : "success"; }
   function connectionUrl(session) { return session.connectUrl || session.authorizationUrl || session.githubAuthUrl || session.loginUrl; }
   function showConnect(session) { const area = $("#connect-action"); area.replaceChildren(); const url = connectionUrl(session); if (typeof url === "string" && (/^https:\/\//i.test(url) || url.startsWith("/"))) { const link = document.createElement("a"); link.className = "button button-primary"; link.href = url; link.textContent = "Connect GitHub"; area.append(link); } else { const note = document.createElement("p"); note.className = "field-help"; note.textContent = "Connect GitHub through the sign-in route provided by this service."; area.append(note); } }
 
@@ -121,6 +122,18 @@
   });
 
   $("#withdraw-consent").addEventListener("click", async () => { const button = $("#withdraw-consent"); const message = $("#withdrawal-message"); if (!state.csrfToken) { setMessage(message, "Your session cannot withdraw consent right now. Refresh and try again.", "error"); return; } setButtonBusy(button, true, "Withdrawing…"); setMessage(message, ""); try { await request("/api/consent", { method:"DELETE" }); await Promise.all([loadSession(), loadLeaderboard()]); setMessage(sessionStatus, "Consent withdrawn. You can choose a repository and opt in again.", "success"); } catch (error) { setMessage(message, displayError(error), "error"); } finally { setButtonBusy(button, false, "Withdraw consent"); } });
+  $("#sync-now").addEventListener("click", async () => {
+    const button = $("#sync-now"); const message = $("#sync-message");
+    if (!state.session || !participating(state.session)) return;
+    if (!state.csrfToken) { setMessage(message, "Your session cannot sync right now. Refresh and try again.", "error"); return; }
+    setButtonBusy(button, true, "Syncing…"); button.setAttribute("aria-busy", "true"); setMessage(message, "Syncing your selected public repository…");
+    try {
+      const outcome = syncOutcome(await request("/api/sync", { method:"POST" }));
+      await Promise.allSettled([loadSession(), loadLeaderboard()]);
+      setMessage(message, outcome === "partial" ? "Sync finished with partial results." : outcome === "no_eligible_prs" ? "Sync finished. No eligible merged pull requests were found for your selected public repository." : "Sync complete.", outcome === "success" ? "success" : "");
+    } catch (error) { setMessage(message, error.status === 409 && asObject(error.payload).status === "busy" ? "A sync is already running for your selected public repository. Try again shortly." : displayError(error), "error"); }
+    finally { button.removeAttribute("aria-busy"); setButtonBusy(button, false, "Sync now"); }
+  });
   monthInput.value = currentMonth(); monthInput.addEventListener("change", loadLeaderboard); $("#leaderboard-retry").addEventListener("click", loadLeaderboard); $("#rules-retry").addEventListener("click", loadRules); $("#profile-retry").addEventListener("click", route); window.addEventListener("hashchange", route);
   loadLeaderboard(); loadRules(); loadSession(); route();
 })();

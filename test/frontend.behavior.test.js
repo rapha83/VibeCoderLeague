@@ -131,4 +131,56 @@ describe("public leaderboard frontend", () => {
     expect(page.document.querySelector("#connect-action a")?.textContent).toContain("Connect GitHub");
     expect(page.window.getComputedStyle(page.document.querySelector("#participation-form")).display).toBe("none");
   });
+
+  it("keeps Sync now hidden until participation is active", async () => {
+    const page = boot({ handler: (path) => {
+      if (path.startsWith("/api/leaderboard")) return json({ rows: [] });
+      if (path === "/api/rules") return json({ rules: [] });
+      if (path === "/api/session") return json({ authenticated: true, csrfToken: "csrf-1", participating: false });
+      if (path === "/api/repos") return json({ repos: [{ id: "repo-1", fullName: "octo/public" }] });
+      throw new Error(`Unexpected request ${path}`);
+    } }); await tick();
+    expect(page.document.querySelector("#withdrawal-panel").hidden).toBe(true);
+    expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(0);
+  });
+
+  it("posts Sync now with CSRF but no authority fields, then refreshes without re-syncing", async () => {
+    let finishSync;
+    const page = boot({ handler: (path) => {
+      if (path.startsWith("/api/leaderboard")) return json({ rows: [] });
+      if (path === "/api/rules") return json({ rules: [] });
+      if (path === "/api/session") return json({ authenticated: true, csrfToken: "csrf-1", participating: true });
+      if (path === "/api/sync") return new Promise(resolve => { finishSync = () => resolve(json({ status: "complete" })); });
+      throw new Error(`Unexpected request ${path}`);
+    } }); await tick();
+    const button = page.document.querySelector("#sync-now"); const message = page.document.querySelector("#sync-message");
+    expect(page.document.querySelector("#withdrawal-panel").hidden).toBe(false); expect(message.getAttribute("role")).toBe("status");
+    button.click(); await tick();
+    expect(button.disabled).toBe(true); expect(button.textContent).toBe("Syncing…"); expect(message.textContent).toContain("Syncing your selected public repository");
+    const syncCalls = page.calls.filter(call => call.path === "/api/sync"); expect(syncCalls).toHaveLength(1); expect(syncCalls[0].options.method).toBe("POST"); expect(syncCalls[0].options.headers.get("X-CSRF-Token")).toBe("csrf-1"); expect(syncCalls[0].options.body).toBeUndefined();
+    finishSync(); await tick();
+    expect(button.disabled).toBe(false); expect(message.textContent).toBe("Sync complete."); expect(message.className).toContain("success");
+    expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(1); expect(page.calls.filter(call => call.path === "/api/session")).toHaveLength(2); expect(page.calls.filter(call => call.path.startsWith("/api/leaderboard"))).toHaveLength(2);
+  });
+
+  it("announces no eligible merged PRs, partial results, and a busy sync without automatic retry", async () => {
+    let outcome = "no_eligible_prs";
+    const page = boot({ handler: (path) => {
+      if (path.startsWith("/api/leaderboard")) return json({ rows: [] });
+      if (path === "/api/rules") return json({ rules: [] });
+      if (path === "/api/session") return json({ authenticated: true, csrfToken: "csrf-1", participating: true });
+      if (path === "/api/sync") {
+        if (outcome === "busy") return json({ status: "busy" }, 409);
+        return json({ status: outcome });
+      }
+      throw new Error(`Unexpected request ${path}`);
+    } }); await tick();
+    const button = page.document.querySelector("#sync-now"); const message = page.document.querySelector("#sync-message");
+    button.click(); await tick();
+    expect(message.textContent).toBe("Sync finished. No eligible merged pull requests were found for your selected public repository."); expect(message.className).not.toContain("success"); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(1);
+    outcome = "partial"; button.click(); await tick();
+    expect(message.textContent).toBe("Sync finished with partial results."); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(2);
+    outcome = "busy"; button.click(); await tick();
+    expect(message.textContent).toBe("A sync is already running for your selected public repository. Try again shortly."); expect(message.className).toContain("error"); expect(button.disabled).toBe(false); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(3);
+  });
 });
