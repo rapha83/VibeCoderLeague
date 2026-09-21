@@ -21,6 +21,14 @@ describe("worker OAuth and public profile integration", () => {
   const fixtures: Miniflare[] = [];
   afterEach(async () => { await Promise.all(fixtures.splice(0).map(mf => mf.dispose())); vi.unstubAllGlobals(); });
 
+  it("returns a safe anonymous session contract with the GitHub authorization route", async () => {
+    const { mf, bindings } = await fixture(); fixtures.push(mf);
+    const response = await request("/api/session", bindings);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toEqual({ authenticated: false, connectUrl: "/api/auth/github" });
+  });
+
   it("binds OAuth state to a secure browser transaction and consumes it exactly once", async () => {
     const { mf, bindings } = await fixture(); fixtures.push(mf);
     const start = await request("/api/auth/github", bindings);

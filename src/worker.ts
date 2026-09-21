@@ -75,6 +75,12 @@ export function createApp() {
     const declarations = await c.env.DB.prepare("SELECT DISTINCT declared_tooling tooling,declared_model model FROM consents WHERE github_id=? AND active=1 AND visibility='public' AND (declared_tooling IS NOT NULL OR declared_model IS NOT NULL) ORDER BY declared_tooling,declared_model").bind(profile.github_id).all<{ tooling: string | null; model: string | null }>();
     return c.json({ id: c.req.param("id"), displayName: profile.display_name, month, repositories: repositories.results, declarations: { status: "self_declared_unverified", tooling: [...new Set(declarations.results.flatMap(row => row.tooling ? [row.tooling] : []))], models: [...new Set(declarations.results.flatMap(row => row.model ? [row.model] : []))] } }, 200, { "Cache-Control": "no-store" });
   });
+  app.get("/api/session", async c => {
+    const s = await session(c);
+    if (!s) return c.json({ authenticated: false, connectUrl: "/api/auth/github" }, 200, { "Cache-Control": "no-store" });
+    const participant = await c.env.DB.prepare("SELECT consent_active FROM participants WHERE github_id=?").bind(s.github_id).first<{ consent_active: number }>();
+    return c.json({ authenticated: true, csrfToken: s.csrf_token, participating: participant?.consent_active === 1 }, 200, { "Cache-Control": "no-store" });
+  });
   app.get("/api/repos", async c => { const s = await session(c); if (!s || !s.access_token_ciphertext) return unauthorized(c); const repos = await new GitHubClient(await open(c.env, s.access_token_ciphertext)).accessibleRepos(); return c.json({ repos: repos.filter(r => r.visibility === "PUBLIC").map(r => ({ id: r.id, fullName: r.nameWithOwner })) }, 200, { "Cache-Control": "no-store" }); });
   app.post("/api/selections", async c => {
     try { if (!await consumeMutationRateLimit(c, "selection")) return c.json({ error: "rate_limited" }, 429, { "Retry-After": String(MUTATION_RATE_WINDOW_MS / 1000) }); } catch { return c.json({ error: "rate_limit_unavailable" }, 503); }
