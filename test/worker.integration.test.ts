@@ -76,20 +76,22 @@ describe("worker OAuth and public profile integration", () => {
     const viewer = { node_id: "u1", login: "octo", avatar_url: null };
     const completeFetch = vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "token" })) : new Response(JSON.stringify(viewer)));
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const assertFailure = async (response: Response, stage: "viewer_lookup" | "token_seal" | "session_persist") => {
-      const completionId = response.headers.get("X-OAuth-Completion-Id");
+    const assertFailure = async (response: Response, stage: "viewer" | "session_encryption" | "session_persistence") => {
       expect(response.status).toBe(502);
       expect(response.headers.get("Cache-Control")).toBe("no-store");
-      expect(response.headers.get("X-OAuth-Completion-Stage")).toBe(stage);
-      expect(completionId).toMatch(/^[a-f0-9]{64}$/);
-      expect(await response.json()).toEqual({ error: "oauth_completion_failed" });
+      expect(response.headers.get("X-OAuth-Completion-Id")).toBeNull();
+      expect(response.headers.get("X-OAuth-Completion-Stage")).toBeNull();
+      const body = await response.json() as { error: string; stage: string; correlation_id: string };
+      expect(body.error).toBe("oauth_completion_failed");
+      expect(body.stage).toBe(stage);
+      expect(body.correlation_id).toMatch(/^[a-f0-9]{64}$/);
       expect(response.headers.getSetCookie()).toContainEqual(expect.stringContaining("__Host-vcl-oauth=;"));
       expect(response.headers.getSetCookie()).toContainEqual(expect.stringContaining("Max-Age=0"));
       expect(response.headers.getSetCookie().some(value => value.startsWith("__Host-vcl="))).toBe(false);
       expect(error).toHaveBeenCalledTimes(1);
-      expect(error).toHaveBeenCalledWith({ event: "oauth_completion_failed", stage, completionId });
+      expect(error).toHaveBeenCalledWith({ event: "oauth_completion_failed", stage, completionId: body.correlation_id });
       expect(error.mock.calls[0]).toHaveLength(1);
-      expect(JSON.stringify({ body: { error: "oauth_completion_failed" }, headers: Array.from(response.headers.entries()), console: error.mock.calls })).not.toContain(sentinel);
+      expect(JSON.stringify({ body, headers: Array.from(response.headers.entries()), console: error.mock.calls })).not.toContain(sentinel);
       error.mockClear();
     };
 
@@ -106,20 +108,20 @@ describe("worker OAuth and public profile integration", () => {
     {
       const { mf, bindings } = await fixture(); fixtures.push(mf);
       vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "token" })) : new Response(sentinel, { status: 503 })));
-      await assertFailure(await callback(await begin(bindings)), "viewer_lookup");
+      await assertFailure(await callback(await begin(bindings)), "viewer");
     }
     {
       const { mf, bindings } = await fixture(); fixtures.push(mf);
       vi.stubGlobal("fetch", completeFetch);
       const started = await begin(bindings);
-      await assertFailure(await callback({ ...started, bindings: { ...bindings, SESSION_ENCRYPTION_KEY_BASE64: sentinel } }), "token_seal");
+      await assertFailure(await callback({ ...started, bindings: { ...bindings, SESSION_ENCRYPTION_KEY_BASE64: sentinel } }), "session_encryption");
     }
     {
       const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
       vi.stubGlobal("fetch", completeFetch);
       const started = await begin(bindings);
       const failingDB = { prepare(sql: string) { if (sql.startsWith("INSERT OR REPLACE INTO sessions")) return { bind: () => ({ run: async () => { throw new Error(sentinel); } }) }; return DB.prepare(sql); } } as unknown as D1Database;
-      await assertFailure(await callback({ ...started, bindings: { ...bindings, DB: failingDB } }), "session_persist");
+      await assertFailure(await callback({ ...started, bindings: { ...bindings, DB: failingDB } }), "session_persistence");
     }
     error.mockRestore();
   });
