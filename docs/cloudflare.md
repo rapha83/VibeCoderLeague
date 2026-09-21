@@ -1,46 +1,45 @@
 # Cloudflare Free deployment and operations
 
-The repository contains the Cloudflare Worker, D1 migrations, static assets, and `wrangler.toml`. It is bound to one dedicated D1 database, `vibe-coder-league` (`a5fcb38c-026a-4bd3-9f93-a2822cf067b4`), in the confirmed Cloudflare account. The Worker is not deployed, no Worker secrets are configured, and no remote migration has been applied.
+The repository targets the existing Cloudflare Worker `vibecoderleague` in the confirmed account, whose public origin is exactly `https://vibecoderleague.grumpzillax.workers.dev`. It is bound to one dedicated D1 database, `vibe-coder-league` (`a5fcb38c-026a-4bd3-9f93-a2822cf067b4`). The similarly named Worker and D1 resources must not be substituted or recreated.
 
 ## Free-plan target
 
-Use the included single Worker for public API/UI and scheduled sync, with D1 for the small derived dataset. The configuration declares static assets, one D1 binding (`DB`), `workers_dev = true`, and **no cron trigger**. Cron remains deliberately disabled until an end-to-end GitHub App journey has direct live evidence. Do not add paid resources, custom domains, DNS routes, or other D1 databases.
+Use the included single Worker for public API/UI and scheduled sync, with D1 for the small derived dataset. The configuration declares static assets, one D1 binding (`DB`), `workers_dev = true`, and `PUBLIC_ORIGIN` as the exact production URL with no trailing slash. It declares **no cron trigger**. Cron remains deliberately disabled until an end-to-end GitHub App journey has direct live evidence. Do not add paid resources, custom domains, DNS routes, or other D1 databases.
 
-Configure secrets only through Cloudflare secret storage, never committed files:
+Configure the GitHub entries only through Cloudflare Worker secret storage, never committed files:
 
 - `GITHUB_APP_ID`
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_APP_CLIENT_ID`
 - `GITHUB_APP_CLIENT_SECRET`
 - `SESSION_ENCRYPTION_KEY_BASE64`
-- `PUBLIC_ORIGIN`
 
-Keep preview/local and production databases separate, and verify exactly one production schedule only after activation is authorized by evidence.
+`PUBLIC_ORIGIN` is a non-secret Worker variable. Do not replace an existing `SESSION_ENCRYPTION_KEY_BASE64` while configuring the other entries.
 
-## workers.dev activation gate
+## workers.dev activation
 
-The confirmed account already has the Workers subdomain `grumpzillax`, as returned by Cloudflare's account API on 2026-09-21. The requested exact subdomain is `grumpuzillax`; it cannot be set because an account supports only one Workers subdomain. Do not deploy this Worker to `grumpzillax.workers.dev`, use another subdomain, add a route, or set a callback until the owner provides an explicit revised origin/authorization.
-
-If a future approved origin is available, use the reported Worker origin exactly as `PUBLIC_ORIGIN`, with no trailing slash, and set the GitHub App's user authorization callback to:
+The Worker origin and GitHub App user-authorization callback are:
 
 ```text
-${PUBLIC_ORIGIN}/api/auth/github/callback
+https://vibecoderleague.grumpzillax.workers.dev
+https://vibecoderleague.grumpzillax.workers.dev/api/auth/github/callback
 ```
 
 The browser flow uses the GitHub App's client ID and client secret, not credentials from a separate OAuth App, an App ID, private key, or installation token.
 
-## Progressive activation sequence
+## Controlled activation sequence
 
-Only after the origin gate is resolved and the existing GitHub App's installation and all secret values are securely available:
-
-1. Apply the additive migrations to the dedicated database once:
+1. Confirm the selected configuration resolves to Worker `vibecoderleague`, D1 `vibe-coder-league` ID `a5fcb38c-026a-4bd3-9f93-a2822cf067b4`, and no cron declaration.
+2. Validate and push the exact candidate commit before production mutation. Inspect any automation to ensure the push does not deploy a different Worker.
+3. Inspect migration status, then apply migrations `0001` through `0004` only to the dedicated D1 database:
    ```sh
    npx wrangler d1 migrations apply vibe-coder-league --remote
    ```
-2. Set Worker secrets from an approved secure source, then deploy the reviewed commit with no cron configuration.
-3. Confirm the static root, `GET /api/rules`, and `GET /api/leaderboard` return `200` before authentication.
-4. Test one controlled public-repository user journey: GitHub App authorization, session, eligible public-repository selection, explicit opt-in, sync, monthly profile/count display, publication, and withdrawal/retraction. Confirm no tokens, private keys, or raw GitHub payloads appear in logs.
-5. Only then add one bounded cron trigger, redeploy, and confirm exactly one production schedule. A `workers.dev` URL alone does not validate D1, GitHub authorization, App installation, or scheduled sync.
+4. Set `PUBLIC_ORIGIN` to the exact origin and set the four GitHub App entries as Worker secrets only when their values are available through an approved secure source. Do not read, print, or replace `SESSION_ENCRYPTION_KEY_BASE64`.
+5. Deploy the exact validated source commit to `vibecoderleague` with no cron configuration. Verify the static root, assets, `/api/rules`, `/api/leaderboard`, `/api/session`, and OAuth initiation without following redirects.
+6. Commit and push a sanitized repair receipt afterward. Its SHA is documentation-only and is not the deployed source SHA.
+
+Do not follow OAuth redirects, create consent, sync repositories, or enable cron in this activation repair.
 
 ## Migration and rollback
 

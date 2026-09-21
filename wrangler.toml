@@ -1,7 +1,11 @@
-name = "vibe-coder-league"
+name = "vibecoderleague"
 main = "src/worker.ts"
 compatibility_date = "2024-12-18"
 workers_dev = true
+
+[vars]
+# Exact production origin; do not include a trailing slash.
+PUBLIC_ORIGIN = "https://vibecoderleague.grumpzillax.workers.dev"
 
 [assets]
 directory = "./src/frontend"

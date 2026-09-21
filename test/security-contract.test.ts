@@ -32,10 +32,14 @@ describe("GitHub boundary", () => {
 });
 
 describe("activation configuration", () => {
-  it("explicitly enables the Free-plan workers.dev initial deployment path", () => {
+  it("targets the existing production Worker, exact public origin, and no cron trigger", () => {
     const wrangler = readRepositoryFile("../wrangler.toml");
+    expect(wrangler).toMatch(/^name\s*=\s*"vibecoderleague"\s*$/m);
     expect(wrangler).toMatch(/^workers_dev\s*=\s*true\s*$/m);
     expect(wrangler).not.toMatch(/^workers_dev\s*=\s*false\s*$/m);
+    expect(wrangler).toMatch(/^PUBLIC_ORIGIN\s*=\s*"https:\/\/vibecoderleague\.grumpzillax\.workers\.dev"\s*$/m);
+    expect(wrangler).not.toMatch(/^\s*\[triggers\]\s*$/m);
+    expect(wrangler).toMatch(/database_id\s*=\s*"a5fcb38c-026a-4bd3-9f93-a2822cf067b4"/);
   });
   it("uses GitHub App user authorization credentials, not a separate broad OAuth App", () => {
     const worker = readRepositoryFile("../src/worker.ts");

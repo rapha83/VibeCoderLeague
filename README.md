@@ -7,7 +7,7 @@ A **public, opt-in monthly leaderboard** for merged GitHub pull requests from ex
 - Tooling/model attribution is optional, self-declared, and labelled **unverified**.
 - Withdrawal or a repository becoming private/inaccessible removes affected contribution records from public output.
 
-This Cloudflare Free MVP has Worker code, D1 migrations, static frontend, a dedicated D1 binding, and local tests. The dedicated D1 database exists, but the Worker is **not deployed or GitHub-integrated**: no credentials are committed, no Worker secrets are configured, and no cron trigger is active.
+This Cloudflare Free MVP has Worker code, D1 migrations, static frontend, a dedicated D1 binding, and local tests. Production targets the existing Worker `vibecoderleague` at `https://vibecoderleague.grumpzillax.workers.dev` and its dedicated database `vibe-coder-league` (`a5fcb38c-026a-4bd3-9f93-a2822cf067b4`). GitHub App configuration is stored only as Worker secrets; cron remains disabled until a separate, evidenced end-to-end authorization and opt-in journey.
 
 ## Quick start
 
