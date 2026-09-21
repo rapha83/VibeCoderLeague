@@ -1,9 +1,53 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { eligibleRepo, GitHubClient, prohibitedGitHubAccess } from "../src/github";
+import { eligibleRepo, GitHubClient, GitHubViewerError, prohibitedGitHubAccess } from "../src/github";
 import { utcMonth, validMonth } from "../src/worker";
 
 const readRepositoryFile = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+
+const fakeViewerToken = "test-user-token-not-for-diagnostics";
+const viewerResponse = { node_id: "U_test", login: "octo", avatar_url: "https://example.test/avatar" };
+
+async function viewerFailure(response: Response | Error) {
+  const client = new GitHubClient(fakeViewerToken, (async () => {
+    if (response instanceof Error) throw response;
+    return response;
+  }) as typeof fetch);
+  try {
+    await client.viewer();
+    throw new Error("expected viewer failure");
+  } catch (error) {
+    expect(error).toBeInstanceOf(GitHubViewerError);
+    return (error as GitHubViewerError).diagnostic;
+  }
+}
+
+describe("GitHub viewer boundary", () => {
+  it("uses the freshly supplied user token only for GET https://api.github.com/user and validates the user contract", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const client = new GitHubClient(fakeViewerToken, (async (url: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify(viewerResponse));
+    }) as typeof fetch);
+
+    await expect(client.viewer()).resolves.toEqual({ id: "U_test", login: "octo", avatarUrl: "https://example.test/avatar" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://api.github.com/user");
+    expect(calls[0].init?.method).toBe("GET");
+    const headers = new Headers(calls[0].init?.headers);
+    expect(headers.get("Authorization")).toBe(`Bearer ${fakeViewerToken}`);
+    expect(headers.get("Accept")).toBe("application/vnd.github+json");
+    expect(headers.get("User-Agent")).toBe("vibe-coder-league");
+  });
+
+  it("reports only an allowlisted diagnostic for viewer failures", async () => {
+    await expect(viewerFailure(new Response("ignored upstream body", { status: 401 }))).resolves.toEqual({ category: "http_error", status: 401 });
+    await expect(viewerFailure(new Response("ignored upstream body", { status: 403 }))).resolves.toEqual({ category: "http_error", status: 403 });
+    await expect(viewerFailure(new Response("not json", { status: 200 }))).resolves.toEqual({ category: "invalid_json", status: 200 });
+    await expect(viewerFailure(new Response(JSON.stringify({ node_id: "U_test", login: 42, email: "not-allowed@example.test" })))).resolves.toEqual({ category: "invalid_user_shape", status: 200 });
+    await expect(viewerFailure(new Error("transport sentinel not for output"))).resolves.toEqual({ category: "transport_error", status: 0 });
+  });
+});
 
 describe("GitHub boundary", () => {
   it("uses only repository metadata, installation repository enumeration, and allowlisted GraphQL fields", async () => {

@@ -14,12 +14,22 @@ const graph = async (token: string, query: string, variables: Record<string, unk
 // This fixed document deliberately excludes title, body, files, patches, review text and source content.
 const PULLS_QUERY = `query LeaguePulls($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){id nameWithOwner visibility pullRequests(first:50,after:$after,states:MERGED,orderBy:{field:UPDATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor}nodes{id mergedAt author{... on User{id login avatarUrl}}}}}}`;
 
+export type ViewerDiagnosticCategory = "http_error" | "transport_error" | "invalid_json" | "invalid_user_shape";
+export type ViewerDiagnostic = { category: ViewerDiagnosticCategory; status: number };
+
+/** An allowlisted viewer failure description. It deliberately carries no upstream payload or cause. */
+export class GitHubViewerError extends Error {
+  constructor(readonly diagnostic: ViewerDiagnostic) { super("github_viewer_failed"); }
+}
+
 export class GitHubClient {
   constructor(private readonly userToken: string, private readonly fetcher: typeof fetch = fetch) {}
   async viewer(): Promise<{ id: string; login: string; avatarUrl: string | null }> {
-    const viewer = await this.rest("/user");
-    if (!viewer.node_id || !viewer.login) throw new Error("invalid_github_user");
-    return { id: String(viewer.node_id), login: String(viewer.login), avatarUrl: typeof viewer.avatar_url === "string" ? viewer.avatar_url : null };
+    const viewer = await this.rest("/user", true);
+    if (!viewer || typeof viewer.node_id !== "string" || !viewer.node_id || typeof viewer.login !== "string" || !viewer.login) {
+      throw new GitHubViewerError({ category: "invalid_user_shape", status: 200 });
+    }
+    return { id: viewer.node_id, login: viewer.login, avatarUrl: typeof viewer.avatar_url === "string" ? viewer.avatar_url : null };
   }
   async accessibleRepos(): Promise<Array<Repo & { installationId: string }>> {
     const installations = await this.rest("/user/installations");
@@ -45,10 +55,24 @@ export class GitHubClient {
     if (!found) throw new Error("repo_inaccessible");
     return { pulls: found.pullRequests.nodes ?? [], cursor: found.pullRequests.pageInfo.endCursor, hasNext: found.pullRequests.pageInfo.hasNextPage, visibility: found.visibility };
   }
-  private async rest(path: string): Promise<any> {
-    const response = await this.fetcher(`${API}${path}`, { headers: { Authorization: `Bearer ${this.userToken}`, Accept: "application/vnd.github+json", "User-Agent": "vibe-coder-league" } });
-    if (!response.ok) throw new Error(`github_${response.status}`);
-    return response.json();
+  private async rest(path: string, viewerDiagnostic = false): Promise<any> {
+    let response: Response;
+    try {
+      response = await this.fetcher(`${API}${path}`, { method: "GET", headers: { Authorization: `Bearer ${this.userToken}`, Accept: "application/vnd.github+json", "User-Agent": "vibe-coder-league" } });
+    } catch {
+      if (viewerDiagnostic) throw new GitHubViewerError({ category: "transport_error", status: 0 });
+      throw new Error("github_transport_error");
+    }
+    if (!response.ok) {
+      if (viewerDiagnostic) throw new GitHubViewerError({ category: "http_error", status: response.status });
+      throw new Error(`github_${response.status}`);
+    }
+    try {
+      return await response.json();
+    } catch {
+      if (viewerDiagnostic) throw new GitHubViewerError({ category: "invalid_json", status: response.status });
+      throw new Error("github_invalid_json");
+    }
   }
 }
 

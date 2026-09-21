@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
-import { eligibleRepo, GitHubClient, installationToken, type Repo } from "./github";
+import { eligibleRepo, GitHubClient, GitHubViewerError, installationToken, type Repo } from "./github";
 
 export type Env = { ASSETS: Fetcher; DB: D1Database; PUBLIC_ORIGIN: string; GITHUB_APP_ID: string; GITHUB_APP_PRIVATE_KEY: string; GITHUB_APP_CLIENT_ID: string; GITHUB_APP_CLIENT_SECRET: string; SESSION_ENCRYPTION_KEY_BASE64: string };
 type Session = { github_id: string; github_login: string; avatar_url: string | null; csrf_token: string; access_token_ciphertext: string | null };
@@ -70,10 +70,11 @@ export function createApp() {
       completionStage = "session_persistence";
       await c.env.DB.prepare("INSERT OR REPLACE INTO sessions(token_hash,github_id,github_login,avatar_url,csrf_token,access_token_ciphertext,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)").bind(await hash(token),user.id,user.login,user.avatarUrl,random(),ciphertext,new Date(Date.now() + 8 * 60 * 60_000).toISOString(),timestamp).run();
       clearOAuthTransaction(c); setCookie(c, "__Host-vcl", token, { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 8 * 60 * 60 }); return c.redirect(`${c.env.PUBLIC_ORIGIN}/`);
-    } catch {
+    } catch (error) {
       const completionId = random();
-      console.error({ event: "oauth_completion_failed", stage: completionStage, completionId });
-      clearOAuthTransaction(c); return c.json({ error: "oauth_completion_failed", stage: completionStage, correlation_id: completionId }, 502, { "Cache-Control": "no-store" });
+      const viewerDiagnostic = completionStage === "viewer" && error instanceof GitHubViewerError ? error.diagnostic : undefined;
+      console.error({ event: "oauth_completion_failed", stage: completionStage, completionId, ...(viewerDiagnostic ? { viewer: viewerDiagnostic } : {}) });
+      clearOAuthTransaction(c); return c.json({ error: "oauth_completion_failed", stage: completionStage, correlation_id: completionId, ...(viewerDiagnostic ? { viewer: viewerDiagnostic } : {}) }, 502, { "Cache-Control": "no-store" });
     }
   });
   app.get("/api/rules", c => c.json({ rules: ["Participation is opt-in.", "One merged pull request counts once for its opted-in author in its merged-at UTC month.", "Only currently public, accessible repositories are published.", "Tooling and model declarations are unverified."] }, 200, { "Cache-Control": "public, max-age=300" }));

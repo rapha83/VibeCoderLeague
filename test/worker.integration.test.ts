@@ -76,7 +76,7 @@ describe("worker OAuth and public profile integration", () => {
     const viewer = { node_id: "u1", login: "octo", avatar_url: null };
     const completeFetch = vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "token" })) : new Response(JSON.stringify(viewer)));
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const assertFailure = async (response: Response, stage: "viewer" | "session_encryption" | "session_persistence") => {
+    const assertFailure = async (response: Response, stage: "viewer" | "session_encryption" | "session_persistence", viewer?: { category: string; status: number }) => {
       expect(response.status).toBe(502);
       expect(response.headers.get("Cache-Control")).toBe("no-store");
       expect(response.headers.get("X-OAuth-Completion-Id")).toBeNull();
@@ -85,11 +85,12 @@ describe("worker OAuth and public profile integration", () => {
       expect(body.error).toBe("oauth_completion_failed");
       expect(body.stage).toBe(stage);
       expect(body.correlation_id).toMatch(/^[a-f0-9]{64}$/);
+      expect(body.viewer).toEqual(viewer);
       expect(response.headers.getSetCookie()).toContainEqual(expect.stringContaining("__Host-vcl-oauth=;"));
       expect(response.headers.getSetCookie()).toContainEqual(expect.stringContaining("Max-Age=0"));
       expect(response.headers.getSetCookie().some(value => value.startsWith("__Host-vcl="))).toBe(false);
       expect(error).toHaveBeenCalledTimes(1);
-      expect(error).toHaveBeenCalledWith({ event: "oauth_completion_failed", stage, completionId: body.correlation_id });
+      expect(error).toHaveBeenCalledWith({ event: "oauth_completion_failed", stage, completionId: body.correlation_id, ...(viewer ? { viewer } : {}) });
       expect(error.mock.calls[0]).toHaveLength(1);
       expect(JSON.stringify({ body, headers: Array.from(response.headers.entries()), console: error.mock.calls })).not.toContain(sentinel);
       error.mockClear();
@@ -108,7 +109,7 @@ describe("worker OAuth and public profile integration", () => {
     {
       const { mf, bindings } = await fixture(); fixtures.push(mf);
       vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("access_token") ? new Response(JSON.stringify({ access_token: "token" })) : new Response(sentinel, { status: 503 })));
-      await assertFailure(await callback(await begin(bindings)), "viewer");
+      await assertFailure(await callback(await begin(bindings)), "viewer", { category: "http_error", status: 503 });
     }
     {
       const { mf, bindings } = await fixture(); fixtures.push(mf);
