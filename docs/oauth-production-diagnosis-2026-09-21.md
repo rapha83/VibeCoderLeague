@@ -45,9 +45,17 @@ A safe diagnostic response is required because the only owner-visible response r
 
 A redirects-disabled request to the initiation route returned HTTP 302 with no response body, and no redirect target, cookie value, state, or header value was recorded. This is a valid initiation redirect result only. It does not validate callback completion, exchange, viewer lookup, encryption, persistence, or owner authentication.
 
+## Validated diagnostic release
+
+The minimal diagnostic release was committed and pushed as `1f826fafae138f2fad1bf5974faf2a30fe277166` after full validation: 27 tests passed across 3 test files, TypeScript type-check passed, and a Worker dry-run bundle completed. Independent QA review passed the exact response allowlist, three failure boundaries, normal redirect flow, no-leakage guard, and unchanged D1/secret/origin/cron scope.
+
+The exact revision was deployed manually through Wrangler with existing variables preserved. Cloudflare reported version `7119af5e-7b32-4b46-9eab-99f692edcd98`; repeated control-plane checks found it at 100% traffic allocation with no subsequent deployment in the observed interval. Version metadata confirms the existing D1 binding, production-origin binding, and four secret bindings are present. The configured source still declares no cron trigger.
+
+A post-deploy redirects-disabled initiation-only smoke returned HTTP 302 with no response body and no redirect target, cookie value, state, or header value recorded. No redirect was followed.
+
 ## Next evidence required
 
-After the exact validated diagnostic revision is the sole active `vibecoderleague` version, the owner should start a fresh login from the main site and return only either:
+The active diagnostic version is now the sole observed `vibecoderleague` traffic version. The owner should start a fresh login from the main site and return only either:
 
 - the compact sanitized JSON error body; or
 - `successful`.
