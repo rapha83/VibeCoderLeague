@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="A public, monthly, opt-in repository leaderboard." />
+    <title>Vibe Coder League</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="site-header">
+      <div class="shell header-content">
+        <a class="wordmark" href="/" aria-label="Vibe Coder League home">Vibe <span>Coder</span> League</a>
+        <a class="header-link" href="#participate">Participation</a>
+      </div>
+    </header>
+
+    <main id="main-content">
+      <section class="hero" aria-labelledby="page-title">
+        <div class="shell hero-grid">
+          <div>
+            <p class="eyebrow">Monthly public board</p>
+            <h1 id="page-title">Make participation an explicit choice.</h1>
+            <p class="hero-copy">Select one eligible public repository, confirm your consent, and appear only after you opt in. You can withdraw consent at any time.</p>
+            <a class="button button-primary" href="#participate">Review participation</a>
+          </div>
+          <aside class="hero-note" aria-label="Participation principle">
+            <p class="eyebrow">The principle</p>
+            <p>Public repos are not enrolled automatically. The leaderboard only shows opted-in participants.</p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="leaderboard-title">
+        <div class="shell">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">The board</p>
+              <h2 id="leaderboard-title">Leaderboard</h2>
+            </div>
+            <label class="month-control" for="month-picker">
+              <span>Month</span>
+              <input id="month-picker" type="month" />
+            </label>
+          </div>
+          <p id="leaderboard-status" class="status-text" role="status" aria-live="polite">Loading leaderboard…</p>
+          <div class="table-wrap" tabindex="0">
+            <table>
+              <caption class="sr-only">Monthly opted-in participants and their published score</caption>
+              <thead>
+                <tr><th scope="col">Rank</th><th scope="col">Participant</th><th scope="col">Repository</th><th scope="col">Score</th></tr>
+              </thead>
+              <tbody id="leaderboard-body"></tbody>
+            </table>
+          </div>
+          <button id="leaderboard-retry" class="button button-secondary retry" type="button" hidden>Try again</button>
+        </div>
+      </section>
+
+      <section id="profile" class="section section-tint" aria-labelledby="profile-title" hidden>
+        <div class="shell profile-panel">
+          <p class="eyebrow">Public participant profile</p>
+          <div id="profile-content"></div>
+          <p id="profile-status" class="status-text" role="status" aria-live="polite">Loading public profile…</p>
+          <button id="profile-retry" class="button button-secondary retry" type="button" hidden>Try again</button>
+        </div>
+      </section>
+
+      <section class="section section-tint" aria-labelledby="rules-title">
+        <div class="shell two-column">
+          <div>
+            <p class="eyebrow">How it works</p>
+            <h2 id="rules-title">Rules and participation</h2>
+            <p>Read the current rules before choosing to participate. The information below comes from the service.</p>
+          </div>
+          <div class="rules-panel">
+            <p id="rules-status" class="status-text" role="status" aria-live="polite">Loading rules…</p>
+            <div id="rules-content"></div>
+            <button id="rules-retry" class="button button-secondary retry" type="button" hidden>Try again</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="participate" class="section" aria-labelledby="participation-title">
+        <div class="shell two-column">
+          <div>
+            <p class="eyebrow">Your choice</p>
+            <h2 id="participation-title">Participate with a public repository</h2>
+            <p>GitHub connection lets this site show the eligible public repositories associated with your session. Nothing is selected until you choose it and confirm consent.</p>
+            <p class="quiet">Tooling and model details are optional self-descriptions. They are not verified.</p>
+          </div>
+          <div class="participation-panel">
+            <p id="session-status" class="status-text" role="status" aria-live="polite">Checking session…</p>
+            <div id="connect-action"></div>
+            <form id="participation-form" novalidate hidden>
+              <fieldset>
+                <legend>Select an eligible public repository</legend>
+                <label for="repo-select">Repository</label>
+                <select id="repo-select" name="repoId" required disabled>
+                  <option value="">Choose a repository</option>
+                </select>
+                <p id="repo-help" class="field-help">Only repositories returned as eligible by the service are available here.</p>
+
+                <label for="declared-tooling">Tooling <span class="unverified">self-declared — unverified</span></label>
+                <input id="declared-tooling" name="declaredTooling" type="text" maxlength="80" autocomplete="off" />
+
+                <label for="declared-model">Model <span class="unverified">self-declared — unverified</span></label>
+                <input id="declared-model" name="declaredModel" type="text" maxlength="80" autocomplete="off" />
+
+                <label class="consent-row" for="consent-checkbox">
+                  <input id="consent-checkbox" name="consent" type="checkbox" required />
+                  <span>I consent to public participation with the repository selected above.</span>
+                </label>
+              </fieldset>
+              <p id="form-message" class="form-message" role="status" aria-live="polite"></p>
+              <button id="participation-submit" class="button button-primary" type="submit">Confirm participation</button>
+            </form>
+            <div id="withdrawal-panel" hidden>
+              <p>You are currently participating. Withdrawing consent removes you from public participation.</p>
+              <button id="sync-now" class="button button-secondary" type="button">Sync now</button>
+              <p id="sync-message" class="form-message" role="status" aria-live="polite"></p>
+              <button id="withdraw-consent" class="button button-danger" type="button">Withdraw consent</button>
+              <p id="withdrawal-message" class="form-message" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer"><div class="shell">Vibe Coder League · Public participation is opt-in.</div></footer>
+  </body>
+</html>
