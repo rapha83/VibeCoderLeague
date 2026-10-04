@@ -41,6 +41,112 @@ const anonymous = (path) => {
 };
 
 describe("public leaderboard frontend", () => {
+  it.each([0, 1, 2, 3, 5])("renders %i API rows without placeholders, reordering or count changes", async count => {
+    // Deliberately not alphabetical: the frontend must preserve server tie-breaking.
+    const rows = Array.from({ length: count }, (_, index) => ({ rank: index + 1, profileId: `p/${index}`, displayName: ["Zed", "Ada", "Bea", "Cam", "Dee"][index], repository: `owner/repo-${index}`, score: index === 0 ? 0 : 7 }));
+    const page = boot({ handler: path => path.startsWith("/api/leaderboard") ? json({ month: "2026-02", rows }) : anonymous(path) }); await tick();
+    const cards = [...page.document.querySelectorAll("#podium li")];
+    const entries = [...page.document.querySelectorAll(".leaderboard-entry")];
+    expect(cards).toHaveLength(Math.min(3, count)); expect(entries).toHaveLength(count);
+    expect(page.document.querySelector("#podium").hidden).toBe(count === 0);
+    expect(cards.map(card => card.querySelector(".podium-name").textContent)).toEqual(rows.slice(0, 3).map(row => row.displayName));
+    expect(cards.map(card => card.querySelector(".podium-count strong").textContent)).toEqual(rows.slice(0, 3).map(row => String(row.score)));
+    expect(entries.map(entry => [...entry.children].map(cell => cell.textContent))).toEqual(rows.map(row => [String(row.rank), row.displayName, row.repository, String(row.score)]));
+    cards.forEach((card, index) => { expect(card.querySelector("a").getAttribute("href")).toBe(`#/profiles/p%2F${index}?month=2026-02`); expect(card.querySelector(".podium-rank").textContent).toContain(["Gold", "Silver", "Bronze"][index]); });
+    expect(page.document.querySelector("#ranking-surfaces").getAttribute("aria-busy")).toBe("false");
+  });
+
+  it("clears old cards while loading and rejects stale month responses on both surfaces", async () => {
+    let resolveOld; let resolveNew;
+    const page = boot({ handler: path => {
+      if (path.startsWith("/api/leaderboard")) return new Promise(resolve => { if (!resolveOld) resolveOld = resolve; else resolveNew = resolve; });
+      return anonymous(path);
+    } });
+    expect(page.document.querySelector("#podium").hidden).toBe(true);
+    const month = page.document.querySelector("#month-picker"); month.value = "2026-01"; month.dispatchEvent(new page.window.Event("change"));
+    expect(page.calls.at(-1).path).toBe("/api/leaderboard?month=2026-01");
+    resolveNew(json({ month: "2026-01", rows: [{ rank: 1, profileId: "new", displayName: "Current", repository: "a/b", score: 3 }] })); await tick();
+    resolveOld(json({ month: "2025-12", rows: [{ rank: 1, profileId: "old", displayName: "Stale", repository: "c/d", score: 9 }] })); await tick();
+    expect(page.document.querySelector("#podium").textContent).toContain("Current");
+    expect(page.document.querySelector("#leaderboard-body").textContent).not.toContain("Stale");
+    expect(page.document.querySelector("#podium a").getAttribute("href")).toContain("month=2026-01");
+  });
+
+  it("removes previous podium and list data during a new request and on failure", async () => {
+    let resolveNext; let attempts = 0;
+    const page = boot({ handler: path => {
+      if (path.startsWith("/api/leaderboard")) {
+        attempts += 1;
+        return attempts === 1 ? json({ month: "2026-01", rows: [{ rank: 1, profileId: "p", displayName: "Published", repository: "a/b", score: 2 }] }) : new Promise(resolve => { resolveNext = resolve; });
+      }
+      return anonymous(path);
+    } }); await tick();
+    expect(page.document.querySelectorAll("#podium li")).toHaveLength(1);
+    const month = page.document.querySelector("#month-picker"); month.value = "2026-02"; month.dispatchEvent(new page.window.Event("change"));
+    expect(page.document.querySelectorAll("#podium li")).toHaveLength(0);
+    expect(page.document.querySelectorAll(".leaderboard-entry")).toHaveLength(0);
+    expect(page.document.querySelector("#ranking-surfaces").getAttribute("aria-busy")).toBe("true");
+    resolveNext(json({ error: "unavailable" }, 503)); await tick();
+    expect(page.document.querySelector("#podium").hidden).toBe(true);
+    expect(page.document.querySelector("#leaderboard-body").textContent).not.toContain("Published");
+    expect(page.document.querySelector("#leaderboard-retry").hidden).toBe(false);
+  });
+
+  it("uses text rendering for untrusted participant content", async () => {
+    const label = '<img src=x onerror="alert(1)">';
+    const page = boot({ handler: path => path.startsWith("/api/leaderboard") ? json({ month: "2026-02", rows: [{ rank: 1, profileId: "p/#?", displayName: label, repository: label, score: 0 }] }) : anonymous(path) }); await tick();
+    expect(page.document.querySelector("#podium").textContent).toContain(label);
+    expect(page.document.querySelectorAll("#podium img, #leaderboard-body img")).toHaveLength(0);
+    expect(page.document.querySelector("#podium a").getAttribute("href")).toBe("#/profiles/p%2F%23%3F?month=2026-02");
+  });
+
+  it("keeps text and state palette pairs above AA text contrast", () => {
+    const luminance = hex => {
+      const channels = hex.match(/[0-9a-f]{2}/gi).map(value => parseInt(value, 16) / 255).map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
+      return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+    };
+    const tokens = Object.fromEntries([...styles.matchAll(/--([a-z-]+):(#(?:[0-9a-f]{6}));/g)].map(match => [match[1], match[2]]));
+    for (const [foreground, background] of [[tokens.ink, tokens.panel], [tokens.muted, tokens.panel], [tokens.green, tokens.panel], [tokens.orange, tokens.panel], [tokens.gold, "#2a2540"], [tokens.silver, tokens.panel], [tokens.bronze, tokens.panel], ["#ffb5bd", tokens.panel], ["#90ecc8", tokens.panel], ["#07111c", tokens.green], ["#07111c", tokens["green-dark"]]]) {
+      const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+      expect((values[0] + .05) / (values[1] + .05)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("keeps headings, table semantics, native controls and mobile podium order explicit", async () => {
+    const page = boot({ handler: anonymous }); await tick();
+    expect(page.document.querySelectorAll("h1")).toHaveLength(1);
+    expect(page.document.querySelectorAll("#profile-title")).toHaveLength(1);
+    expect(page.document.querySelector("#month-picker").getAttribute("type")).toBe("month");
+    expect(page.document.querySelector("label[for='month-picker']").textContent).toContain("UTC");
+    expect(page.document.querySelectorAll("thead th[scope='col']")).toHaveLength(4);
+    expect(page.document.querySelector(".table-wrap").getAttribute("tabindex")).toBe("0");
+    expect(styles).toContain(".podium-1 { grid-column:2; grid-row:1;");
+    expect(styles).toContain(".podium-card { grid-column:1; grid-row:auto;");
+    expect(styles).toContain(":focus-visible");
+  });
+
+  it.each([
+    [503, { error: "sync_unavailable", message: "secret upstream details", diagnostic: { correlationId: "support-1234", stage: "secret", category: "secret" } }, "Support reference: support-1234."],
+    [503, { error: "sync_unavailable", correlationId: "<script>secret</script>" }, "Sync could not be completed."],
+    [409, { error: "sync_not_available" }, "review consent and public repository access"],
+    [429, { error: "rate_limited" }, "Wait before manually trying again."],
+    [403, { error: "csrf_invalid" }, "Refresh your session"],
+    [401, { error: "unauthorized" }, "Reconnect GitHub"],
+    [200, { status: "unexpected" }, "The sync result could not be confirmed."]
+  ])("announces safe actionable sync failure (%i), with exactly one manual POST", async (status, payload, copy) => {
+    const page = boot({ handler: path => {
+      if (path === "/api/session") return json({ authenticated: true, csrfToken: "csrf-1", participating: true });
+      if (path === "/api/sync") return json(payload, status);
+      return anonymous(path);
+    } }); await tick();
+    page.document.querySelector("#sync-now").click(); await tick();
+    const message = page.document.querySelector("#sync-message");
+    expect(message.textContent).toContain(copy); expect(message.textContent).not.toContain("secret");
+    expect(message.className).toContain("error");
+    expect(page.document.querySelector("#sync-now").disabled).toBe(false);
+    expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(1);
+    if (status === 401) expect(page.document.querySelector("#withdrawal-panel").hidden).toBe(true);
+  });
   it("links a ranking to a public profile and also loads that profile on direct hash entry", async () => {
     const handler = (path) => {
       if (path.startsWith("/api/leaderboard")) return json({ month: "2025-01", rows: [{ rank: 1, profileId: "profile/42", displayName: "Ada", repository: "octo/league", score: 8 }] });
@@ -52,6 +158,7 @@ describe("public leaderboard frontend", () => {
     expect(participant?.textContent).toBe("Ada"); expect(participant?.getAttribute("href")).toBe("#/profiles/profile%2F42?month=2025-01");
     first.window.location.hash = participant.getAttribute("href"); first.window.dispatchEvent(new first.window.HashChangeEvent("hashchange")); await tick();
     expect(first.calls.some(call => call.path === "/api/profiles/profile%2F42?month=2025-01")).toBe(true);
+    expect(first.document.activeElement.id).toBe("profile-title");
     const profileText = first.document.querySelector("#profile-content").textContent;
     expect(profileText).toContain("Cursor, Claude Code");
     expect(profileText).toContain("GPT-4.1, o3");
@@ -87,7 +194,7 @@ describe("public leaderboard frontend", () => {
       return anonymous(path);
     } });
     expect(page.document.querySelector("#leaderboard-status").textContent).toBe("Loading leaderboard…"); await tick();
-    expect(page.document.querySelector("#leaderboard-status").textContent).toContain("Request failed (503)");
+    expect(page.document.querySelector("#leaderboard-status").textContent).toContain("Rankings could not be loaded");
     expect(page.document.querySelector("#leaderboard-retry").hidden).toBe(false);
     page.document.querySelector("#leaderboard-retry").click(); await tick();
     expect(page.document.querySelector("#leaderboard-status").textContent).toContain("No opted-in participants");
@@ -156,11 +263,11 @@ describe("public leaderboard frontend", () => {
     } }); await tick();
     const button = page.document.querySelector("#sync-now"); const message = page.document.querySelector("#sync-message");
     expect(page.document.querySelector("#withdrawal-panel").hidden).toBe(false); expect(message.getAttribute("role")).toBe("status");
-    button.click(); await tick();
+    button.click(); button.dispatchEvent(new page.window.Event("click")); await tick();
     expect(button.disabled).toBe(true); expect(button.textContent).toBe("Syncing…"); expect(message.textContent).toContain("Syncing your selected public repository");
     const syncCalls = page.calls.filter(call => call.path === "/api/sync"); expect(syncCalls).toHaveLength(1); expect(syncCalls[0].options.method).toBe("POST"); expect(syncCalls[0].options.headers.get("X-CSRF-Token")).toBe("csrf-1"); expect(syncCalls[0].options.body).toBeUndefined();
     finishSync(); await tick();
-    expect(button.disabled).toBe(false); expect(message.textContent).toBe("Sync complete."); expect(message.className).toContain("success");
+    expect(button.disabled).toBe(false); expect(message.textContent).toContain("Sync complete."); expect(message.className).toContain("success");
     expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(1); expect(page.calls.filter(call => call.path === "/api/session")).toHaveLength(2); expect(page.calls.filter(call => call.path.startsWith("/api/leaderboard"))).toHaveLength(2); expect(page.calls.filter(call => call.path === "/api/profiles/p1")).toHaveLength(2);
   });
 
@@ -178,10 +285,10 @@ describe("public leaderboard frontend", () => {
     } }); await tick();
     const button = page.document.querySelector("#sync-now"); const message = page.document.querySelector("#sync-message");
     button.click(); await tick();
-    expect(message.textContent).toBe("Sync finished. No eligible merged pull requests were found for your selected public repository."); expect(message.className).not.toContain("success"); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(1);
+    expect(message.textContent).toContain("Sync finished. No eligible merged pull requests were found for your selected public repository."); expect(message.className).not.toContain("success"); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(1);
     outcome = "partial"; button.click(); await tick();
-    expect(message.textContent).toBe("Sync finished with partial results."); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(2);
+    expect(message.textContent).toContain("Sync finished with partial results."); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(2);
     outcome = "busy"; button.click(); await tick();
-    expect(message.textContent).toBe("A sync is already running for your selected public repository. Try again shortly."); expect(message.className).toContain("error"); expect(button.disabled).toBe(false); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(3);
+    expect(message.textContent).toContain("Wait a moment, then use Sync now again."); expect(message.className).toContain("error"); expect(button.disabled).toBe(false); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(3);
   });
 });

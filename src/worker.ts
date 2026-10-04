@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
-import { eligibleRepo, GitHubClient, GitHubViewerError, installationToken, type Repo } from "./github";
+import { eligibleRepo, GitHubClient, GitHubRequestError, GitHubViewerError, installationToken, type Repo } from "./github";
 
 export type Env = { ASSETS: Fetcher; DB: D1Database; PUBLIC_ORIGIN: string; GITHUB_APP_ID: string; GITHUB_APP_PRIVATE_KEY: string; GITHUB_APP_CLIENT_ID: string; GITHUB_APP_CLIENT_SECRET: string; SESSION_ENCRYPTION_KEY_BASE64: string };
 type Session = { github_id: string; github_login: string; avatar_url: string | null; csrf_token: string; access_token_ciphertext: string | null };
@@ -116,25 +116,46 @@ export function createApp(options: AppOptions = {}) {
   app.post("/api/sync", async c => {
     try { if (!await consumeMutationRateLimit(c, "manual_sync")) return c.json({ error: "rate_limited" }, 429, { "Retry-After": String(MUTATION_RATE_WINDOW_MS / 1000) }); } catch { return c.json({ error: "rate_limit_unavailable" }, 503); }
     const s = await csrf(c); if (s instanceof Response) return s; if (!s.access_token_ciphertext) return unauthorized(c);
+    let stage: "consent_selection" | "session_decryption" | "repo_access" | "repo_visibility" | "consent_recheck" | "installation_token" | "sync" | "result_read" = "consent_selection";
+    const correlationId = crypto.randomUUID();
+    try {
     const selected = await c.env.DB.prepare("SELECT c.github_id,c.repo_id,c.repo_name,c.installation_id,c.declared_tooling,c.declared_model FROM consents c JOIN participants p ON p.github_id=c.github_id WHERE c.github_id=? AND c.active=1 AND c.visibility='public' AND p.consent_active=1 LIMIT 2").bind(s.github_id).all<SyncConsentRecord>();
     if (selected.results.length !== 1) return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409);
+    stage = "session_decryption";
     const client = new GitHubClient(await open(c.env, s.access_token_ciphertext));
-    let candidate: (Repo & { installationId: string }) | null;
-    try { candidate = eligibleRepo(await client.accessibleRepos(), selected.results[0].repo_id); } catch { return c.json({ error: "sync_unavailable", category: "upstream_or_persistence" }, 503); }
+    stage = "repo_access";
+    const candidate = eligibleRepo(await client.accessibleRepos(), selected.results[0].repo_id);
     if (!candidate) return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409);
-    try { await client.publicRepo(candidate); } catch { return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409); }
+    stage = "repo_visibility";
+    try { await client.publicRepo(candidate); } catch (error) {
+      if (error instanceof Error && error.message === "repo_not_public") return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409);
+      throw error;
+    }
+    stage = "consent_recheck";
     const currentSelections = await c.env.DB.prepare("SELECT c.github_id,c.repo_id,c.repo_name,c.installation_id,c.declared_tooling,c.declared_model FROM consents c JOIN participants p ON p.github_id=c.github_id WHERE c.github_id=? AND c.active=1 AND c.visibility='public' AND p.consent_active=1 LIMIT 2").bind(s.github_id).all<SyncConsentRecord>();
     const current = currentSelections.results.length === 1 && currentSelections.results[0].repo_id === candidate.id ? currentSelections.results[0] : null;
     if (!current) return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409);
-    try {
+      stage = "installation_token";
       const token = await (options.mintToken ?? installationToken)(c.env.GITHUB_APP_ID, c.env.GITHUB_APP_PRIVATE_KEY, candidate.installationId);
+      stage = "sync";
       const outcome = await (options.sync ?? syncConsent)(c.env, current, token, MANUAL_SYNC_PAGES_PER_CONSENT);
       if (outcome.status === "busy") return c.json({ status: "busy" }, 409);
       if (outcome.status === "partial") return c.json({ status: "partial" });
       if (outcome.status !== "complete") return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409);
+      stage = "result_read";
       const contributions = await c.env.DB.prepare("SELECT COUNT(*) count FROM pull_requests WHERE repo_id=? AND author_id=?").bind(current.repo_id, s.github_id).first<{ count: number }>();
-      return c.json({ status: contributions?.count ? "complete" : "no_eligible_prs" });
-    } catch { return c.json({ error: "sync_unavailable", category: "upstream_or_persistence" }, 503); }
+      if (!contributions || !Number.isInteger(contributions.count) || contributions.count < 0) throw new Error("sync_result_invalid");
+      return c.json({ status: contributions.count ? "complete" : "no_eligible_prs" });
+    } catch (error) {
+      const diagnostic = {
+        stage: stage === "sync" ? (error instanceof GitHubRequestError ? "pull_fetch" : "sync_persistence") : stage,
+        category: error instanceof GitHubRequestError ? error.category : error instanceof Error && error.message === "sync_lease_lost" ? "lease_lost" : stage === "session_decryption" ? "configuration_error" : ["consent_selection", "consent_recheck", "sync", "result_read"].includes(stage) ? "persistence_error" : "unknown_error",
+        status: error instanceof GitHubRequestError ? error.status : 0,
+        correlationId
+      };
+      console.warn("sync_unavailable", diagnostic);
+      return c.json({ error: "sync_unavailable", category: "upstream_or_persistence", diagnostic }, 503, { "Cache-Control": "no-store" });
+    }
   });
   return app;
 }

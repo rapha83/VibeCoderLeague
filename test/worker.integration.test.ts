@@ -233,6 +233,28 @@ describe("manual post-consent sync integration", () => {
     expect(await DB.prepare("SELECT cursor,status FROM sync_jobs WHERE github_id='u1' AND repo_id='r1'").first()).toEqual({ cursor: null, status: "complete" });
   });
 
+  it("supports login, opt-in, UTC ranking, idempotent sync and withdrawal through the API", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings);
+    vi.stubGlobal("fetch", accessibleFetch([
+      { id: "pr-utc", mergedAt: "2026-09-30T22:30:00-03:00", author: { id: "u1", login: "octo" } },
+      { id: "pr-other", mergedAt: "2026-10-01T00:00:00Z", author: { id: "u2", login: "other" } }
+    ]));
+    const headers = { Cookie: auth.cookie, Origin: origin, "X-CSRF-Token": auth.csrfToken, "Content-Type": "application/json" };
+    const optIn = await createApp().request(`${origin}/api/selections`, { method: "POST", headers, body: JSON.stringify({ consent: true, repoId: "r1" }) }, bindings);
+    expect(optIn.status).toBe(201);
+    for (let attempt = 0; attempt < 2; attempt++) expect(await (await syncRequest(bindings, auth, { mintToken: async () => "fake" })).json()).toEqual({ status: "complete" });
+    const ranked = await (await request("/api/leaderboard?month=2026-10", bindings)).json() as { rows: Array<{ rank: number }> };
+    expect(ranked.rows).toHaveLength(1); expect(ranked.rows[0].rank).toBe(1);
+    expect((await DB.prepare("SELECT COUNT(*) count FROM pull_requests").first<{ count: number }>())?.count).toBe(1);
+    expect(await (await request("/api/leaderboard?month=2026-09", bindings)).json()).toEqual({ month: "2026-09", rows: [] });
+    const withdrawn = await createApp().request(`${origin}/api/consent`, { method: "DELETE", headers }, bindings);
+    expect(await withdrawn.json()).toEqual({ ok: true });
+    expect(await (await request("/api/leaderboard?month=2026-10", bindings)).json()).toEqual({ month: "2026-10", rows: [] });
+    expect((await DB.prepare("SELECT COUNT(*) count FROM pull_requests").first<{ count: number }>())?.count).toBe(0);
+    const mintToken = vi.fn(); expect((await syncRequest(bindings, auth, { mintToken })).status).toBe(409); expect(mintToken).not.toHaveBeenCalled();
+  });
+
   it("returns only sanitized busy, partial, and failure state", async () => {
     const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
     const auth = await signIn(bindings); await selected(DB);
@@ -241,7 +263,71 @@ describe("manual post-consent sync integration", () => {
     expect(await (await syncRequest(bindings, auth, { mintToken: vi.fn(async () => "token"), sync: vi.fn(async () => ({ status: "partial" as const })) })).json()).toEqual({ status: "partial" });
     const failed = await syncRequest(bindings, auth, { mintToken: vi.fn(async () => { throw new Error("upstream secret sentinel"); }) });
     expect(failed.status).toBe(503);
-    expect(await failed.json()).toEqual({ error: "sync_unavailable", category: "upstream_or_persistence" });
+    expect(await failed.json()).toEqual({ error: "sync_unavailable", category: "upstream_or_persistence", diagnostic: { stage: "installation_token", category: "unknown_error", status: 0, correlationId: expect.stringMatching(/^[a-f0-9-]{36}$/) } });
+  });
+
+  it("preserves stored contributions and consent on a GraphQL error, then permits a clean retry", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings); await selected(DB);
+    const pulls = [{ id: "pr-existing", mergedAt: "2026-10-01T00:00:00Z", author: { id: "u1", login: "octo" } }];
+    const normal = accessibleFetch(pulls), mintToken = vi.fn(async () => "installation-token");
+    vi.stubGlobal("fetch", normal);
+    expect(await (await syncRequest(bindings, auth, { mintToken })).json()).toEqual({ status: "complete" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/graphql") && String(init?.body).includes("LeaguePulls")) return Response.json({ errors: [{ message: "private upstream sentinel" }], data: { repository: null } });
+      return normal(url, init);
+    }));
+    const failed = await syncRequest(bindings, auth, { mintToken });
+    expect(failed.status).toBe(503); expect(failed.headers.get("Cache-Control")).toBe("no-store");
+    const body = await failed.json() as { diagnostic: unknown };
+    expect(body).toEqual({ error: "sync_unavailable", category: "upstream_or_persistence", diagnostic: { stage: "pull_fetch", category: "graphql_error", status: 200, correlationId: expect.stringMatching(/^[a-f0-9-]{36}$/) } });
+    expect(warn).toHaveBeenCalledWith("sync_unavailable", body.diagnostic);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("sentinel"); warn.mockRestore();
+    expect(await DB.prepare("SELECT active,visibility FROM consents WHERE github_id='u1'").first()).toEqual({ active: 1, visibility: "public" });
+    expect((await DB.prepare("SELECT COUNT(*) count FROM pull_requests").first<{ count: number }>())?.count).toBe(1);
+    expect(await DB.prepare("SELECT status,lease_token FROM sync_jobs WHERE github_id='u1'").first()).toEqual({ status: "partial", lease_token: null });
+    vi.stubGlobal("fetch", normal);
+    expect(await (await syncRequest(bindings, auth, { mintToken })).json()).toEqual({ status: "complete" });
+  });
+
+  it("diagnoses access and visibility upstream errors rather than consent denial or zero", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings); await selected(DB);
+    const mintToken = vi.fn(), normal = accessibleFetch();
+    for (const stage of ["repo_access", "repo_visibility"]) {
+      vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+        if ((stage === "repo_access" && url.endsWith("/user/installations")) || (stage === "repo_visibility" && url.endsWith("/graphql"))) return new Response("sensitive payload", { status: 403 });
+        return normal(url, init);
+      }));
+      const response = await syncRequest(bindings, auth, { mintToken });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: "sync_unavailable", diagnostic: { stage, category: "http_error", status: 403 } });
+    }
+    expect(mintToken).not.toHaveBeenCalled();
+  });
+
+  it("diagnoses a stale encrypted session and signing configuration safely", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings); await selected(DB);
+    vi.stubGlobal("fetch", accessibleFetch());
+    const failed = await syncRequest(bindings, auth);
+    expect(failed.status).toBe(503);
+    expect(await failed.json()).toMatchObject({ error: "sync_unavailable", diagnostic: { stage: "installation_token", category: "configuration_error", status: 0 } });
+    const stale = await syncRequest({ ...bindings, SESSION_ENCRYPTION_KEY_BASE64: btoa("bad") }, auth);
+    expect(stale.status).toBe(503);
+    expect(await stale.json()).toMatchObject({ error: "sync_unavailable", diagnostic: { stage: "session_decryption", category: "configuration_error", status: 0 } });
+  });
+
+  it("never interprets a missing persisted count as a legitimate zero", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings); await selected(DB);
+    vi.stubGlobal("fetch", accessibleFetch());
+    const prepare = DB.prepare.bind(DB);
+    const mockedDB = { prepare: (sql: string) => sql.startsWith("SELECT COUNT(*) count FROM pull_requests WHERE repo_id=") ? { bind: () => ({ first: async () => null }) } : prepare(sql) } as unknown as D1Database;
+    const response = await syncRequest({ ...bindings, DB: mockedDB }, auth, { mintToken: async () => "fake", sync: async () => ({ status: "complete" }) });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: "sync_unavailable", diagnostic: { stage: "result_read", category: "persistence_error", status: 0 } });
   });
 
   it("refreshes the server-verified installation ID on selection after a reinstall without duplicating consent or cursor", async () => {
@@ -326,7 +412,7 @@ describe("scheduled sync budget integration", () => {
     const consent = { github_id: "u1", repo_id: "r-u1", repo_name: "octo/u1", installation_id: "i-u1", declared_tooling: null, declared_model: null };
     vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
     const budget = new SyncWorkBudget(1);
-    await expect(syncConsent(bindings, consent, "token", 2, budget)).rejects.toThrow("github_503");
+    await expect(syncConsent(bindings, consent, "token", 2, budget)).rejects.toMatchObject({ category: "http_error", status: 503 });
     expect(budget.remaining).toBe(0);
     expect(await DB.prepare("SELECT cursor,status,lease_token,lease_until FROM sync_jobs WHERE github_id='u1' AND repo_id='r-u1'").first()).toEqual({ cursor: null, status: "partial", lease_token: null, lease_until: null });
   });
