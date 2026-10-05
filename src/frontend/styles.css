@@ -30,6 +30,9 @@ p { overflow-wrap:anywhere; } h1,h2,h3 { text-wrap:balance; }
 .hero-copy { color:var(--muted); }
 .hero-ranking-link { display:inline-flex; align-items:center; gap:.5rem; min-height:2.8rem; padding:.75rem 0; font-size:.9rem; }
 .hero-note,.participation-panel,.rules-panel,.profile-panel { border-radius:.75rem; min-width:0; padding:clamp(1.25rem,3vw,2rem); }
+.hero-visual { min-width:0; }
+/* A single editorial illustration, not a data surface. Keep both rivals in view. */
+.hero-art { display:block; width:100%; max-width:100%; height:auto; aspect-ratio:3 / 2; object-fit:contain; border-radius:.75rem; background:#071125; }
 .hero-note { margin-top:1.5rem; border-top:1px solid var(--line); }
 .protocol-score { font:700 clamp(1.4rem,2.8vw,2rem)/1.4 var(--mono); letter-spacing:-.04em; }
 .protocol-score span { display:block; color:var(--orange); }
@@ -96,7 +99,7 @@ input[type="text"],select { border-color:#627491; background:#0d1524; border-rad
 #tool-options [aria-selected="true"],#tool-options [role="option"]:hover { color:var(--ink); background:#243852; outline:1px solid var(--focus); outline-offset:-1px; }
 @media (max-width:760px) {
   .hero-grid,.two-column { grid-template-columns:1fr; gap:2rem; }
-  .hero-note { margin-top:0; }
+  .hero-note { margin-top:1.25rem; }
   .podium { grid-template-columns:1fr; gap:.75rem; }
   .podium-card { grid-column:1; grid-row:auto; text-align:left; padding:1.5rem; }
   .podium-count { margin-top:1rem; display:flex; align-items:baseline; gap:1rem; }
