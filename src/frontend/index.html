@@ -13,7 +13,7 @@
     <header class="site-header">
       <div class="shell header-content">
         <a class="wordmark" href="/" aria-label="Vibe Coder League home">Vibe <span>Coder</span> League</a>
-        <a class="header-link" href="#participate">Participation</a>
+        <nav aria-label="Main navigation"><a class="header-link" href="#leaderboard">Rankings</a><a class="header-link" href="#participate">Join the league</a></nav>
       </div>
     </header>
 
@@ -21,19 +21,22 @@
       <section class="hero" aria-labelledby="page-title">
         <div class="shell hero-grid">
           <div>
-            <p class="eyebrow">Monthly public board</p>
-            <h1 id="page-title">Make participation an explicit choice.</h1>
-            <p class="hero-copy">Select one eligible public repository, confirm your consent, and appear only after you opt in. You can withdraw consent at any time.</p>
-            <a class="button button-primary" href="#participate">Review participation</a>
+            <p class="eyebrow">Vibe Coder League / Monthly rankings</p>
+            <h1 id="page-title">Ship code.<br /><span>Climb the league.</span></h1>
+            <p class="hero-copy">Real merged pull requests. One UTC month. A public league for developers who choose to participate.</p>
+            <a class="button button-primary" href="#participate">Join the league <span aria-hidden="true">↗</span></a>
+            <a class="hero-ranking-link" href="#leaderboard">Explore rankings ↓</a>
           </div>
-          <aside class="hero-note" aria-label="Participation principle">
-            <p class="eyebrow">The principle</p>
-            <p>Public repos are not enrolled automatically. The leaderboard only shows opted-in participants.</p>
+          <aside class="hero-note" aria-label="League scoring and participation">
+            <p class="eyebrow">The scoring protocol</p>
+            <p class="protocol-score">1 merged PR <span>= 1 point</span></p>
+            <p>Counted in its merged-at UTC month. Only opted-in contributions from currently public, accessible repositories are published.</p>
+            <p class="quiet">Your repo. Your choice. Withdraw consent at any time.</p>
           </aside>
         </div>
       </section>
 
-      <section class="section" aria-labelledby="leaderboard-title">
+      <section id="leaderboard" class="section arena" aria-labelledby="leaderboard-title">
         <div class="shell">
           <div class="section-heading">
             <div>
@@ -41,19 +44,24 @@
               <h2 id="leaderboard-title">Leaderboard</h2>
             </div>
             <label class="month-control" for="month-picker">
-              <span>Month</span>
+              <span>Season / UTC month</span>
               <input id="month-picker" type="month" />
             </label>
           </div>
           <p id="leaderboard-status" class="status-text" role="status" aria-live="polite">Loading leaderboard…</p>
-          <div class="table-wrap" tabindex="0">
+          <p id="declarations-help" class="field-help">Tool and model: self-declared current configuration, unverified by PR. These details are not attributed to the selected month or individual contributions.</p>
+          <div id="ranking-surfaces" aria-busy="true" aria-describedby="declarations-help">
+          <ol id="podium" class="podium" aria-label="Top three participants" hidden></ol>
+          <div class="ranking-heading"><h3>Complete ranking</h3><p>API order · merged PRs</p></div>
+          <div class="table-wrap" tabindex="0" role="region" aria-label="Complete monthly ranking">
             <table>
               <caption class="sr-only">Monthly opted-in participants and their published score</caption>
               <thead>
-                <tr><th scope="col">Rank</th><th scope="col">Participant</th><th scope="col">Repository</th><th scope="col">Score</th></tr>
+                <tr><th scope="col">Rank</th><th scope="col">Participant</th><th scope="col">Repository</th><th scope="col">Tool</th><th scope="col">Model</th><th scope="col">Merged PRs</th></tr>
               </thead>
               <tbody id="leaderboard-body"></tbody>
             </table>
+          </div>
           </div>
           <button id="leaderboard-retry" class="button button-secondary retry" type="button" hidden>Try again</button>
         </div>
@@ -61,7 +69,9 @@
 
       <section id="profile" class="section section-tint" aria-labelledby="profile-title" hidden>
         <div class="shell profile-panel">
+          <a class="header-link" href="#leaderboard">← Back to rankings</a>
           <p class="eyebrow">Public participant profile</p>
+          <h2 id="profile-title" tabindex="-1">Participant profile</h2>
           <div id="profile-content"></div>
           <p id="profile-status" class="status-text" role="status" aria-live="polite">Loading public profile…</p>
           <button id="profile-retry" class="button button-secondary retry" type="button" hidden>Try again</button>
@@ -87,7 +97,12 @@
         <div class="shell two-column">
           <div>
             <p class="eyebrow">Your choice</p>
-            <h2 id="participation-title">Participate with a public repository</h2>
+            <h2 id="participation-title">Your place in the league.</h2>
+            <ol class="journey-steps" aria-label="Participation steps">
+              <li><strong>Connect GitHub</strong><span>Review your eligible public repositories.</span></li>
+              <li><strong>Choose &amp; consent</strong><span>Nothing is enrolled automatically.</span></li>
+              <li><strong>Sync contributions</strong><span>Publish eligible merged PRs. Withdraw any time.</span></li>
+            </ol>
             <p>GitHub connection lets this site show the eligible public repositories associated with your session. Nothing is selected until you choose it and confirm consent.</p>
             <p class="quiet">Tooling and model details are optional self-descriptions. They are not verified.</p>
           </div>
@@ -98,13 +113,17 @@
               <fieldset>
                 <legend>Select an eligible public repository</legend>
                 <label for="repo-select">Repository</label>
-                <select id="repo-select" name="repoId" required disabled>
+                <select id="repo-select" name="repoId" aria-describedby="repo-help" required disabled>
                   <option value="">Choose a repository</option>
                 </select>
                 <p id="repo-help" class="field-help">Only repositories returned as eligible by the service are available here.</p>
 
                 <label for="declared-tooling">Tooling <span class="unverified">self-declared — unverified</span></label>
-                <input id="declared-tooling" name="declaredTooling" type="text" maxlength="80" autocomplete="off" />
+                <div class="tool-combobox">
+                  <input id="declared-tooling" name="declaredTooling" type="text" maxlength="80" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="tool-options" aria-describedby="tool-help" />
+                  <ul id="tool-options" role="listbox" aria-label="Tooling suggestions" hidden></ul>
+                </div>
+                <p id="tool-help" class="field-help">Optional. Type a tool or use ↓ / ↑ and Enter to choose a suggestion. Other/custom accepts your own name; Not informed leaves tooling empty. No model is assigned.</p>
 
                 <label for="declared-model">Model <span class="unverified">self-declared — unverified</span></label>
                 <input id="declared-model" name="declaredModel" type="text" maxlength="80" autocomplete="off" />
@@ -118,10 +137,13 @@
               <button id="participation-submit" class="button button-primary" type="submit">Confirm participation</button>
             </form>
             <div id="withdrawal-panel" hidden>
-              <p>You are currently participating. Withdrawing consent removes you from public participation.</p>
-              <button id="sync-now" class="button button-secondary" type="button">Sync now</button>
+              <p class="eyebrow">Participation active</p>
+              <h3>Your contribution control room</h3>
+              <p>Sync your selected public repository to update eligible contributions. Rankings use the selected UTC month; sync imports repository contributions.</p>
+              <button id="sync-now" class="button button-primary" type="button">Sync now</button>
               <p id="sync-message" class="form-message" role="status" aria-live="polite"></p>
-              <button id="withdraw-consent" class="button button-danger" type="button">Withdraw consent</button>
+              <div class="withdrawal-zone"><p>Leaving the league? Withdrawing consent removes you from public participation.</p>
+              <button id="withdraw-consent" class="button button-danger" type="button">Withdraw consent</button></div>
               <p id="withdrawal-message" class="form-message" role="status" aria-live="polite"></p>
             </div>
           </div>
