@@ -16,6 +16,45 @@
   const profileSection = $("#profile");
   const profileContent = $("#profile-content");
   const profileStatus = $("#profile-status");
+  const toolingInput = $("#declared-tooling");
+  const toolOptions = $("#tool-options");
+  // Suggestions, not a popularity ranking. Legacy/custom names remain untouched.
+  const tools = ["Codex", "Claude Code", "Antigravity", "Nimrava", "OpenClaw", "Hermes", "Pi", "OpenCode", "Cursor", "GitHub Copilot", "Aider", "Cline", "Roo Code", "Devin Desktop (formerly Windsurf)"];
+  let activeTool = -1;
+  let visibleTools = [];
+  function closeTools() { toolOptions.hidden = true; toolingInput.setAttribute("aria-expanded", "false"); toolingInput.removeAttribute("aria-activedescendant"); activeTool = -1; }
+  function openTools() {
+    const query = toolingInput.value.toLowerCase().trim();
+    visibleTools = tools.filter(tool => tool.toLowerCase().includes(query)).map(label => ({ label, value: label === "Devin Desktop (formerly Windsurf)" ? "Devin Desktop" : label }));
+    visibleTools.push({ label: "Other/custom", custom: true }, { label: "Not informed", value: "" });
+    toolOptions.replaceChildren(); activeTool = -1; toolingInput.removeAttribute("aria-activedescendant");
+    visibleTools.forEach((tool, index) => {
+      const option = document.createElement("li"); option.id = `tool-option-${index}`; option.setAttribute("role", "option"); option.setAttribute("aria-selected", "false"); option.textContent = tool.label;
+      option.addEventListener("pointerdown", event => event.preventDefault());
+      option.addEventListener("click", () => chooseTool(index)); toolOptions.append(option);
+    });
+    toolOptions.hidden = false; toolingInput.setAttribute("aria-expanded", "true");
+  }
+  function chooseTool(index) {
+    const tool = visibleTools[index]; if (!tool) return;
+    if (!tool.custom) toolingInput.value = tool.value;
+    closeTools(); toolingInput.focus();
+  }
+  toolingInput.addEventListener("focus", openTools);
+  toolingInput.addEventListener("click", openTools);
+  toolingInput.addEventListener("input", openTools);
+  toolingInput.addEventListener("blur", closeTools);
+  toolingInput.addEventListener("keydown", event => {
+    if (event.isComposing) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault(); if (toolOptions.hidden) openTools();
+      activeTool = (activeTool + (event.key === "ArrowDown" ? 1 : activeTool < 0 ? 0 : -1) + visibleTools.length) % visibleTools.length;
+      [...toolOptions.children].forEach((option, index) => option.setAttribute("aria-selected", String(index === activeTool)));
+      const option = toolOptions.children[activeTool]; toolingInput.setAttribute("aria-activedescendant", option.id); option.scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter" && !toolOptions.hidden) { event.preventDefault(); if (activeTool >= 0) chooseTool(activeTool); else closeTools(); }
+    else if (event.key === "Escape") { event.preventDefault(); closeTools(); }
+    else if (event.key === "Tab") closeTools();
+  });
 
   function currentMonth() { return new Date().toISOString().slice(0, 7); }
   function asObject(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
@@ -47,6 +86,12 @@
   function itemList(value) { return Array.isArray(value) ? value : []; }
   function leaderboardRows(payload) { const source = asObject(payload); return Array.isArray(payload) ? payload : itemList(source.rows || source.entries || source.leaderboard); }
 
+  function configuration(entry) {
+    const declarations = asObject(entry.declarations);
+    const text = values => itemList(values).filter(value => typeof value === "string" && value.trim()).join(", ") || "Not informed";
+    return declarations.status === "self_declared_unverified" ? [text(declarations.tooling), text(declarations.models)] : ["Not informed", "Not informed"];
+  }
+
   function renderPodium(rows, month) {
     podium.replaceChildren(); podium.hidden = rows.length === 0;
     rows.slice(0, 3).forEach((item, index) => {
@@ -59,7 +104,10 @@
       const count = document.createElement("p"); count.className = "podium-count";
       const score = document.createElement("strong"); score.textContent = asText(entry.score);
       const label = document.createElement("span"); label.textContent = "merged PRs"; count.append(score, label);
-      card.append(rank, name, repository, count); podium.append(card);
+      const details = document.createElement("dl"); details.className = "podium-configuration";
+      configuration(entry).forEach((value, index) => { const group = document.createElement("div"); const term = document.createElement("dt"); term.textContent = index === 0 ? "Tool" : "Model"; const definition = document.createElement("dd"); definition.textContent = value; group.append(term, definition); details.append(group); });
+      const qualifier = document.createElement("p"); qualifier.className = "configuration-qualifier"; qualifier.textContent = "Self-declared current configuration · unverified by PR";
+      card.append(rank, name, repository, count, details, qualifier); podium.append(card);
     });
   }
 
@@ -73,15 +121,15 @@
       const returnedMonth = asText(asObject(payload).month, monthInput.value);
       renderPodium(rows, returnedMonth);
       if (!rows.length) {
-        row(leaderboardBody, ["", "No opted-in participants yet for this month.", "", ""]);
+        row(leaderboardBody, ["", "No opted-in participants yet for this month.", "", "", "", ""]);
         setMessage(leaderboardStatus, `No opted-in participants are published for ${returnedMonth}. Choose another UTC month or join the league below.`);
         return;
       }
-      rows.forEach((item, index) => { const entry = asObject(item); row(leaderboardBody, [asText(entry.rank, String(index + 1)), asText(entry.displayName), asText(entry.repository), asText(entry.score)], "leaderboard-entry", typeof entry.profileId === "string" ? entry.profileId : null, returnedMonth); });
+      rows.forEach((item, index) => { const entry = asObject(item); row(leaderboardBody, [asText(entry.rank, String(index + 1)), asText(entry.displayName), asText(entry.repository), ...configuration(entry), asText(entry.score)], "leaderboard-entry", typeof entry.profileId === "string" ? entry.profileId : null, returnedMonth); });
       setMessage(leaderboardStatus, `${rows.length} opted-in participant${rows.length === 1 ? "" : "s"} published for ${returnedMonth}.`);
     } catch (error) {
       if (requestId !== state.leaderboardRequest) return;
-      row(leaderboardBody, ["", "Leaderboard unavailable.", "", ""]);
+      row(leaderboardBody, ["", "Leaderboard unavailable.", "", "", "", ""]);
       setMessage(leaderboardStatus, "Rankings could not be loaded. Try again to request this UTC month.", "error"); $("#leaderboard-retry").hidden = false;
     } finally { if (requestId === state.leaderboardRequest) rankingSurfaces.setAttribute("aria-busy", "false"); }
   }

@@ -51,7 +51,7 @@ p { overflow-wrap:anywhere; } h1,h2,h3 { text-wrap:balance; }
 .ranking-heading h3 { font-size:1rem; }
 .ranking-heading p { font:.75rem/1.6 var(--mono); color:var(--muted); }
 .table-wrap { border-radius:.6rem; }
-table { table-layout:fixed; min-width:33rem; }
+table { table-layout:fixed; min-width:52rem; }
 th,td { overflow-wrap:anywhere; }
 th { font-family:var(--mono); } th:first-child { width:5rem; } th:last-child { width:8rem; }
 td:first-child,td:last-child { font-family:var(--mono); font-variant-numeric:tabular-nums; }
@@ -82,6 +82,15 @@ input[type="text"],select { border-color:#627491; background:#0d1524; border-rad
 .profile-stats dt,.profile-stats dd { font-family:var(--mono); }
 .rules-panel li+li { margin-top:1rem; }
 .site-footer { background:var(--paper); border-top:1px solid var(--line); color:var(--muted); font-family:var(--mono); }
+/* Current configuration stays subordinate to rank, but never truncates names. */
+.podium-configuration { border-top:1px solid var(--line); margin:1.2rem 0 .5rem; padding-top:1rem; text-align:left; display:grid; gap:.65rem; min-width:0; }
+.podium-configuration dt { color:var(--muted); font-family:var(--mono); font-size:.75rem; text-transform:uppercase; }
+.podium-configuration dd { margin:0; overflow-wrap:anywhere; }
+.configuration-qualifier { color:var(--muted); font-size:.78rem; text-align:left; }
+.tool-combobox { position:relative; min-width:0; }
+#tool-options { position:absolute; z-index:2; inset:100% 0 auto; list-style:none; margin:.25rem 0 0; padding:.25rem; border:1px solid var(--line); border-radius:.4rem; background:var(--panel); max-height:18rem; overflow-y:auto; }
+#tool-options [role="option"] { padding:.65rem; min-height:2.8rem; overflow-wrap:anywhere; cursor:pointer; }
+#tool-options [aria-selected="true"],#tool-options [role="option"]:hover { color:var(--ink); background:#243852; outline:1px solid var(--focus); outline-offset:-1px; }
 @media (max-width:760px) {
   .hero-grid,.two-column { grid-template-columns:1fr; gap:2rem; }
   .hero-note { margin-top:0; }

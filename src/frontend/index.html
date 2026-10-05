@@ -49,14 +49,15 @@
             </label>
           </div>
           <p id="leaderboard-status" class="status-text" role="status" aria-live="polite">Loading leaderboard…</p>
-          <div id="ranking-surfaces" aria-busy="true">
+          <p id="declarations-help" class="field-help">Tool and model: self-declared current configuration, unverified by PR. These details are not attributed to the selected month or individual contributions.</p>
+          <div id="ranking-surfaces" aria-busy="true" aria-describedby="declarations-help">
           <ol id="podium" class="podium" aria-label="Top three participants" hidden></ol>
           <div class="ranking-heading"><h3>Complete ranking</h3><p>API order · merged PRs</p></div>
           <div class="table-wrap" tabindex="0" role="region" aria-label="Complete monthly ranking">
             <table>
               <caption class="sr-only">Monthly opted-in participants and their published score</caption>
               <thead>
-                <tr><th scope="col">Rank</th><th scope="col">Participant</th><th scope="col">Repository</th><th scope="col">Merged PRs</th></tr>
+                <tr><th scope="col">Rank</th><th scope="col">Participant</th><th scope="col">Repository</th><th scope="col">Tool</th><th scope="col">Model</th><th scope="col">Merged PRs</th></tr>
               </thead>
               <tbody id="leaderboard-body"></tbody>
             </table>
@@ -118,7 +119,11 @@
                 <p id="repo-help" class="field-help">Only repositories returned as eligible by the service are available here.</p>
 
                 <label for="declared-tooling">Tooling <span class="unverified">self-declared — unverified</span></label>
-                <input id="declared-tooling" name="declaredTooling" type="text" maxlength="80" autocomplete="off" />
+                <div class="tool-combobox">
+                  <input id="declared-tooling" name="declaredTooling" type="text" maxlength="80" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="tool-options" aria-describedby="tool-help" />
+                  <ul id="tool-options" role="listbox" aria-label="Tooling suggestions" hidden></ul>
+                </div>
+                <p id="tool-help" class="field-help">Optional. Type a tool or use ↓ / ↑ and Enter to choose a suggestion. Other/custom accepts your own name; Not informed leaves tooling empty. No model is assigned.</p>
 
                 <label for="declared-model">Model <span class="unverified">self-declared — unverified</span></label>
                 <input id="declared-model" name="declaredModel" type="text" maxlength="80" autocomplete="off" />

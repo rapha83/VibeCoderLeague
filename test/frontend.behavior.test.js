@@ -41,6 +41,51 @@ const anonymous = (path) => {
 };
 
 describe("public leaderboard frontend", () => {
+  it("offers recognized optional tools with complete keyboard and custom controls", async () => {
+    const page = boot({ handler: path => path === "/api/session" ? json({ authenticated: true, csrfToken: "csrf" }) : path === "/api/repos" ? json({ repos: [{ id: "1", fullName: "a/b" }] }) : anonymous(path) }); await tick();
+    const input = page.document.querySelector("#declared-tooling"); const model = page.document.querySelector("#declared-model"); const list = page.document.querySelector("#tool-options");
+    const key = value => input.dispatchEvent(new page.window.KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true }));
+    expect(input.value).toBe(""); expect(model.value).toBe(""); expect(input.getAttribute("role")).toBe("combobox"); input.focus();
+    expect([...list.children].map(option => option.textContent)).toEqual(["Codex", "Claude Code", "Antigravity", "Nimrava", "OpenClaw", "Hermes", "Pi", "OpenCode", "Cursor", "GitHub Copilot", "Aider", "Cline", "Roo Code", "Devin Desktop (formerly Windsurf)", "Other/custom", "Not informed"]);
+    key("ArrowDown"); expect(input.getAttribute("aria-activedescendant")).toBe(list.firstElementChild.id); key("ArrowDown"); key("ArrowUp"); key("Enter"); expect(input.value).toBe("Codex"); expect(list.hidden).toBe(true);
+    input.value = "Claude"; input.dispatchEvent(new page.window.Event("input")); expect(list.firstElementChild.textContent).toBe("Claude Code"); key("ArrowDown"); key("Escape"); expect(input.value).toBe("Claude"); expect(input.hasAttribute("aria-activedescendant")).toBe(false);
+    input.value = "Legacy Windsurf + private helper"; input.dispatchEvent(new page.window.Event("input")); list.firstElementChild.click(); expect(input.value).toBe("Legacy Windsurf + private helper");
+    model.value = "Independent model"; input.click(); list.lastElementChild.click(); expect(input.value).toBe(""); expect(model.value).toBe("Independent model");
+    input.click(); key("ArrowUp"); expect(list.lastElementChild.getAttribute("aria-selected")).toBe("true"); key("Tab"); expect(list.hidden).toBe(true); expect(input.getAttribute("aria-expanded")).toBe("false");
+    expect(page.calls.some(call => call.path === "/api/selections")).toBe(false);
+  });
+
+  it.each(["Codex", "Windsurf", "My custom tool <script>literal</script>", ""])("preserves %s through submission and fresh API-backed refresh", async tooling => {
+    let saved;
+    const handler = (path, options) => {
+      if (path === "/api/session") return json({ authenticated: true, csrfToken: "csrf", participating: Boolean(saved) });
+      if (path === "/api/repos") return json({ repos: [{ id: "1", fullName: "a/b" }] });
+      if (path === "/api/selections") { saved = JSON.parse(options.body); return json({ ok: true }); }
+      if (path.startsWith("/api/leaderboard")) return json({ rows: saved ? [{ rank: 1, displayName: "Participant", repository: "a/b", score: 2, declarations: { status: "self_declared_unverified", tooling: saved.declaredTooling ? [saved.declaredTooling] : [], models: [saved.declaredModel] } }] : [] });
+      return anonymous(path);
+    };
+    const page = boot({ handler }); await tick(); page.document.querySelector("#repo-select").value = "1"; page.document.querySelector("#declared-tooling").value = tooling; page.document.querySelector("#declared-model").value = "Separate model"; page.document.querySelector("#consent-checkbox").checked = true;
+    page.document.querySelector("#participation-form").dispatchEvent(new page.window.Event("submit", { cancelable: true })); await tick();
+    expect(saved.declaredTooling).toBe(tooling || undefined); expect(saved.declaredModel).toBe("Separate model");
+    const refreshed = boot({ handler }); await tick();
+    expect(refreshed.document.querySelector(".leaderboard-entry").children[3].textContent).toBe(tooling || "Not informed");
+    expect(refreshed.document.querySelector(".podium-configuration").textContent).toContain(tooling || "Not informed"); expect(refreshed.document.querySelector(".podium-configuration").textContent).toContain("Separate model");
+    expect(refreshed.document.querySelector("#podium script")).toBeNull();
+  });
+
+  it("renders safe multi-value declarations, missing fallbacks and long mobile content on both surfaces", async () => {
+    const long = "Custom-" + "x".repeat(240); const rows = [{ displayName: "One", declarations: { status: "self_declared_unverified", tooling: [long, "<img src=x onerror=alert(1)>"], models: ["Model A", "Model B"] } }, { displayName: "Two", declarations: { status: "self_declared_unverified", tooling: [], models: ["", null] } }, { displayName: "Three" }];
+    const page = boot({ handler: path => path.startsWith("/api/leaderboard") ? json({ rows }) : anonymous(path) }); await tick();
+    const entries = page.document.querySelectorAll(".leaderboard-entry"); const cards = page.document.querySelectorAll(".podium-card");
+    expect(entries[0].children[3].textContent).toBe(`${long}, <img src=x onerror=alert(1)>`); expect(entries[0].children[4].textContent).toBe("Model A, Model B");
+    expect(cards[0].querySelector("dd").textContent).toBe(entries[0].children[3].textContent); expect(page.document.querySelector("#ranking-surfaces img")).toBeNull();
+    for (const card of cards) expect(card.textContent).toContain("Self-declared current configuration · unverified by PR");
+    expect(entries[1].children[3].textContent).toBe("Not informed"); expect(entries[2].children[4].textContent).toBe("Not informed");
+    expect(page.document.querySelector("#declarations-help").textContent).toContain("not attributed to the selected month");
+    expect(page.document.querySelector(".table-wrap").getAttribute("tabindex")).toBe("0");
+    expect(styles).toContain(".podium-configuration dd { margin:0; overflow-wrap:anywhere; }"); expect(styles).toContain("min-width:52rem"); expect(styles).toContain(".podium { grid-template-columns:1fr;"); expect(styles).toContain("overflow-y:auto");
+  });
+
   it.each([0, 1, 2, 3, 5])("renders %i API rows without placeholders, reordering or count changes", async count => {
     // Deliberately not alphabetical: the frontend must preserve server tie-breaking.
     const rows = Array.from({ length: count }, (_, index) => ({ rank: index + 1, profileId: `p/${index}`, displayName: ["Zed", "Ada", "Bea", "Cam", "Dee"][index], repository: `owner/repo-${index}`, score: index === 0 ? 0 : 7 }));
@@ -51,7 +96,7 @@ describe("public leaderboard frontend", () => {
     expect(page.document.querySelector("#podium").hidden).toBe(count === 0);
     expect(cards.map(card => card.querySelector(".podium-name").textContent)).toEqual(rows.slice(0, 3).map(row => row.displayName));
     expect(cards.map(card => card.querySelector(".podium-count strong").textContent)).toEqual(rows.slice(0, 3).map(row => String(row.score)));
-    expect(entries.map(entry => [...entry.children].map(cell => cell.textContent))).toEqual(rows.map(row => [String(row.rank), row.displayName, row.repository, String(row.score)]));
+    expect(entries.map(entry => [...entry.children].map(cell => cell.textContent))).toEqual(rows.map(row => [String(row.rank), row.displayName, row.repository, "Not informed", "Not informed", String(row.score)]));
     cards.forEach((card, index) => { expect(card.querySelector("a").getAttribute("href")).toBe(`#/profiles/p%2F${index}?month=2026-02`); expect(card.querySelector(".podium-rank").textContent).toContain(["Gold", "Silver", "Bronze"][index]); });
     expect(page.document.querySelector("#ranking-surfaces").getAttribute("aria-busy")).toBe("false");
   });
@@ -118,7 +163,7 @@ describe("public leaderboard frontend", () => {
     expect(page.document.querySelectorAll("#profile-title")).toHaveLength(1);
     expect(page.document.querySelector("#month-picker").getAttribute("type")).toBe("month");
     expect(page.document.querySelector("label[for='month-picker']").textContent).toContain("UTC");
-    expect(page.document.querySelectorAll("thead th[scope='col']")).toHaveLength(4);
+    expect(page.document.querySelectorAll("thead th[scope='col']")).toHaveLength(6);
     expect(page.document.querySelector(".table-wrap").getAttribute("tabindex")).toBe("0");
     expect(styles).toContain(".podium-1 { grid-column:2; grid-row:1;");
     expect(styles).toContain(".podium-card { grid-column:1; grid-row:auto;");

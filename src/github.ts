@@ -111,11 +111,20 @@ export class GitHubClient {
 export const prohibitedGitHubAccess = (url: string, graphql: string = "") =>
   /\/contents(?:\/|\s|$)|\/pulls(?:\/|\s|$)|\.diff(?:\s|$)|\.patch(?:\s|$)|\b(title|body|files|patch|content)\b/i.test(`${url} ${graphql}`);
 
+/** Preserve a configured legacy App ID; otherwise use GitHub's recommended Client ID issuer. */
+export function resolveGitHubAppIssuer(bindings: { GITHUB_APP_ID?: string; GITHUB_APP_CLIENT_ID?: string }): string {
+  for (const value of [bindings.GITHUB_APP_ID, bindings.GITHUB_APP_CLIENT_ID]) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  throw new GitHubRequestError("configuration_error");
+}
+
 /** Mint a short-lived installation token; it is held only in memory for the sync request. */
-export async function installationToken(appId: string, privateKeyPem: string, installationId: string, fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init)): Promise<string> {
+export async function installationToken(issuer: string, privateKeyPem: string, installationId: string, fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init)): Promise<string> {
+  if (typeof issuer !== "string" || !issuer.trim()) throw new GitHubRequestError("configuration_error");
   const issued = Math.floor(Date.now() / 1000) - 30, expires = issued + 9 * 60;
   const head = bytes64(new TextEncoder().encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
-  const claims = bytes64(new TextEncoder().encode(JSON.stringify({ iat: issued, exp: expires, iss: appId })));
+  const claims = bytes64(new TextEncoder().encode(JSON.stringify({ iat: issued, exp: expires, iss: issuer })));
   let signature: ArrayBuffer;
   try {
     const key = await crypto.subtle.importKey("pkcs8", pemBytes(privateKeyPem), { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);

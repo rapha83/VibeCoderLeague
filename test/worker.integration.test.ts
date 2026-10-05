@@ -21,6 +21,65 @@ describe("worker OAuth and public profile integration", () => {
   const fixtures: Miniflare[] = [];
   afterEach(async () => { await Promise.all(fixtures.splice(0).map(mf => mf.dispose())); vi.unstubAllGlobals(); });
 
+  it("adds current public declarations to every leaderboard row without changing scores or ordering", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const customTool = 'Custom, "工具" <script>alert(1)</script>';
+    const longModel = `Legacy model, "Ω" ${"x".repeat(400)}`;
+    for (const [id, name, active] of [["u1", "Alpha", 1], ["u2", "Beta", 1], ["u3", "Gamma", 1], ["u4", "Withdrawn", 0], ["u5", "Private", 1], ["u6", "Unknown", 1]] as const) {
+      await DB.prepare("INSERT INTO participants(github_id,github_login,display_name,public_profile_id,consent_active,updated_at) VALUES(?,?,?,?,?,?)").bind(id, id, name, `profile-${id}`, active, "2025-01-01").run();
+    }
+    const consent = async (id: string, repo: string, tooling: string | null, model: string | null, visibility = "public", active = 1) => {
+      await DB.prepare("INSERT INTO consents(github_id,repo_id,repo_name,installation_id,visibility,declared_tooling,declared_model,active,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id, repo, `${id}/${repo}`, "installation", visibility, tooling, model, active, "2025-01-01").run();
+    };
+    await consent("u1", "r1", "Cursor", "Model A");
+    await consent("u1", "r2", customTool, longModel);
+    await consent("u1", "r3", "Cursor", "Model B");
+    await consent("u1", "r4", "Cursor", "Model A");
+    await consent("u1", "private", "PRIVATE TOOL", "PRIVATE MODEL", "private");
+    await consent("u1", "unknown", "UNKNOWN TOOL", "UNKNOWN MODEL", "unknown");
+    await consent("u1", "inactive", "INACTIVE TOOL", "INACTIVE MODEL", "public", 0);
+    await consent("u2", "r1", null, null);
+    await consent("u3", "r1", "", "");
+    await consent("u4", "r1", "WITHDRAWN TOOL", "WITHDRAWN MODEL");
+    await consent("u5", "r1", "PRIVATE PARTICIPANT TOOL", "PRIVATE PARTICIPANT MODEL", "private");
+    await consent("u6", "r1", "UNKNOWN PARTICIPANT TOOL", "UNKNOWN PARTICIPANT MODEL", "unknown");
+    const pr = async (id: string, repo: string, prId: string, month = "2025-01") => {
+      await DB.prepare("INSERT INTO pull_requests(pr_id,repo_id,repo_name,author_id,author_login,merged_at,month_utc,generation,declared_tooling,declared_model) VALUES(?,?,?,?,?,?,?,1,?,?)").bind(prId, repo, `${id}/${repo}`, id, id, `${month}-10T00:00:00Z`, month, "STALE PR TOOL", "STALE PR MODEL").run();
+    };
+    await pr("u1", "r1", "pr1"); await pr("u1", "r1", "pr2");
+    await pr("u1", "r2", "february", "2025-02");
+    await pr("u1", "private", "private-pr"); await pr("u1", "unknown", "unknown-pr"); await pr("u1", "inactive", "inactive-pr");
+    for (const id of ["u2", "u3", "u4", "u5", "u6"]) await pr(id, "r1", `pr-${id}`);
+    const emptyDeclarations = { status: "self_declared_unverified", tooling: [], models: [] };
+    const response = await request("/api/leaderboard?month=2025-01", bindings);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("public, max-age=60");
+    expect(await response.json()).toEqual({ month: "2025-01", rows: [
+      { rank: 1, profileId: "profile-u1", displayName: "Alpha", repository: "u1/r1", score: 2, declarations: { status: "self_declared_unverified", tooling: ["Cursor", customTool], models: ["Model A", "Model B", longModel] } },
+      { rank: 2, profileId: "profile-u2", displayName: "Beta", repository: "u2/r1", score: 1, declarations: emptyDeclarations },
+      { rank: 3, profileId: "profile-u3", displayName: "Gamma", repository: "u3/r1", score: 1, declarations: emptyDeclarations }
+    ] });
+    // Consent edits change historical-month declarations, not PR snapshots or ranking.
+    await DB.prepare("UPDATE consents SET declared_tooling='Updated Tool',declared_model='Updated Model' WHERE github_id='u1' AND repo_id='r1'").run();
+    const updated = await request("/api/leaderboard?month=2025-01", bindings);
+    expect(await updated.json()).toMatchObject({ rows: [{ rank: 1, score: 2, declarations: { tooling: ["Cursor", customTool, "Updated Tool"], models: ["Model A", "Model B", longModel, "Updated Model"] } }, { rank: 2, score: 1 }, { rank: 3, score: 1 }] });
+    // Loss of visibility hides both contributions and declarations, even with stale PRs retained.
+    await DB.prepare("UPDATE consents SET visibility='private' WHERE github_id='u1' AND repo_id='r2'").run();
+    const privateResponse = await request("/api/leaderboard?month=2025-01", bindings);
+    const privateBody = await privateResponse.json();
+    expect(JSON.stringify(privateBody)).not.toContain(customTool);
+    expect(JSON.stringify(privateBody)).not.toContain(longModel);
+    expect(privateBody).toMatchObject({ rows: [{ score: 2, declarations: { tooling: ["Cursor", "Updated Tool"], models: ["Model A", "Model B", "Updated Model"] } }, { score: 1 }, { score: 1 }] });
+    await DB.prepare("UPDATE participants SET consent_active=0 WHERE github_id='u1'").run();
+    const withdrawn = await request("/api/leaderboard?month=2025-01", bindings);
+    expect(await withdrawn.json()).toEqual({ month: "2025-01", rows: [
+      { rank: 1, profileId: "profile-u2", displayName: "Beta", repository: "u2/r1", score: 1, declarations: emptyDeclarations },
+      { rank: 2, profileId: "profile-u3", displayName: "Gamma", repository: "u3/r1", score: 1, declarations: emptyDeclarations }
+    ] });
+    expect(await (await request("/api/leaderboard?month=2024-12", bindings)).json()).toEqual({ month: "2024-12", rows: [] });
+    expect((await request("/api/leaderboard?month=2025-13", bindings)).status).toBe(400);
+  });
+
   it("returns a safe anonymous session contract with the GitHub authorization route", async () => {
     const { mf, bindings } = await fixture(); fixtures.push(mf);
     const response = await request("/api/session", bindings);
@@ -135,7 +194,7 @@ describe("worker OAuth and public profile integration", () => {
       DB.prepare("INSERT INTO pull_requests(pr_id,repo_id,repo_name,author_id,author_login,merged_at,month_utc,generation) VALUES('pr1','r1','octo/public','u1','octo','2025-01-10T00:00:00Z','2025-01',1),('pr4','r4','octo/other-public','u1','octo','2025-02-01T00:00:00Z','2025-02',1),('pr2','r2','hidden/public','u2','hidden','2025-01-10T00:00:00Z','2025-01',1),('pr3','r3','private/private','u3','private','2025-01-10T00:00:00Z','2025-01',1)")
     ]);
     const leaderboard = await request("/api/leaderboard?month=2025-01", bindings);
-    expect(await leaderboard.json()).toEqual({ month: "2025-01", rows: [{ rank: 1, profileId: "profile-1", displayName: "Octo", repository: "octo/public", score: 1 }] });
+    expect(await leaderboard.json()).toEqual({ month: "2025-01", rows: [{ rank: 1, profileId: "profile-1", displayName: "Octo", repository: "octo/public", score: 1, declarations: { status: "self_declared_unverified", tooling: ["Cursor"], models: ["Model A", "Model B"] } }] });
     const profile = await request("/api/profiles/profile-1?month=2025-01", bindings);
     expect(profile.headers.get("Cache-Control")).toBe("no-store");
     expect(await profile.json()).toEqual({ id: "profile-1", displayName: "Octo", month: "2025-01", repositories: [{ repository: "octo/public", pullRequests: 1 }], declarations: { status: "self_declared_unverified", tooling: ["Cursor"], models: ["Model A", "Model B"] } });
@@ -221,6 +280,37 @@ describe("manual post-consent sync integration", () => {
     expect((await DB.prepare("SELECT COUNT(*) count FROM pull_requests WHERE author_id='u1'").first<{ count: number }>())?.count).toBe(1);
     expect((await DB.prepare("SELECT COUNT(*) count FROM pull_requests WHERE author_id='u2'").first<{ count: number }>())?.count).toBe(0);
     expect(await DB.prepare("SELECT cursor,status,lease_token,lease_until FROM sync_jobs WHERE github_id='u1' AND repo_id='r1'").first()).toEqual({ cursor: null, status: "complete", lease_token: null, lease_until: null });
+  });
+
+  it.each([undefined, "legacy-app"])("resolves the same issuer in manual and scheduled sync", async appId => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    bindings.GITHUB_APP_ID = appId;
+    const auth = await signIn(bindings); await selected(DB);
+    vi.stubGlobal("fetch", accessibleFetch());
+    const mintToken = vi.fn(async () => "synthetic-installation-token");
+    const sync = vi.fn(async () => ({ status: "complete" as const }));
+    expect((await syncRequest(bindings, auth, { mintToken, sync })).status).toBe(200);
+    await runScheduledSync(bindings, { mintToken, sync });
+    expect(mintToken).toHaveBeenCalledTimes(2);
+    expect(mintToken.mock.calls.every(call => call[0] === (appId ?? "client"))).toBe(true);
+  });
+
+  it("fails closed without either issuer in manual and scheduled sync", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const auth = await signIn(bindings); await selected(DB);
+    delete bindings.GITHUB_APP_ID;
+    bindings.GITHUB_APP_CLIENT_ID = "";
+    vi.stubGlobal("fetch", accessibleFetch());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const mintToken = vi.fn(), sync = vi.fn();
+      const response = await syncRequest(bindings, auth, { mintToken, sync });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ diagnostic: { stage: "installation_token", category: "configuration_error", status: 0 } });
+      await runScheduledSync(bindings, { mintToken, sync });
+      expect(mintToken).not.toHaveBeenCalled();
+      expect(sync).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
   });
 
   it("completes a no-PR manual sync without creating contributions", async () => {
