@@ -44,11 +44,11 @@ describe("public leaderboard frontend", () => {
   it("presents VibeRivals branding, canonical share metadata and transparent AI competition scoring", async () => {
     const page = boot({ handler: anonymous }); await tick();
     const meta = selector => page.document.querySelector(selector).getAttribute("content");
-    expect(page.document.title).toBe("VibeRivals — The vibe coding competition");
+    expect(page.document.title).toBe("Vibe Coding Rivals — The vibe coding competition");
     expect(page.document.querySelector('.hero .eyebrow').textContent).toBe("The vibe coding competition");
     expect(page.document.querySelector('.wordmark').textContent).toBe("VibeRivals");
     expect(page.document.querySelector('.wordmark').getAttribute("aria-label")).toBe("VibeRivals home");
-    expect(page.document.querySelector('#page-title').textContent).toBe("Build with AI.Merge. Climb.");
+    expect(page.document.querySelector('#page-title').textContent).toBe("Vibe Coding Rivals");
     expect(page.document.querySelector('link[rel="canonical"]').href).toBe("https://viberivals.com/");
     expect(meta('meta[property="og:url"]')).toBe("https://viberivals.com/");
     expect(meta('meta[property="og:site_name"]')).toBe("VibeRivals");
@@ -56,16 +56,27 @@ describe("public leaderboard frontend", () => {
     for (const selector of ['meta[name="description"]', 'meta[property="og:description"]', 'meta[name="twitter:description"]']) {
       expect(meta(selector).toLowerCase()).toContain("monthly utc");
       expect(meta(selector)).toContain("quality or productivity");
+      expect(meta(selector)).toContain("self-declared, unverified");
+      expect(meta(selector)).toContain("eligible merged PR");
     }
     expect(meta('meta[name="twitter:card"]')).toBe("summary");
     expect(page.document.querySelector('.hero-copy').textContent).toContain("tools and models");
+    expect(page.document.querySelector('.hero-copy').textContent).toContain("Compete with builders using AI");
+    expect(page.document.querySelector('.hero-copy').textContent).toContain("self-declared, unverified");
+    expect(page.document.querySelectorAll('h1')).toHaveLength(1);
+    expect(page.document.querySelector('.hero').getAttribute('aria-labelledby')).toBe("page-title");
+    expect(page.document.querySelector('.hero-ranking-link').textContent).toContain("View the leaderboard");
+    expect(page.document.querySelector('.hero-ranking-link').getAttribute('href')).toBe("#leaderboard");
+    expect(page.document.querySelector('#connect-action a').textContent).toBe("Connect GitHub");
+    expect(page.document.querySelector('#sync-now').textContent).toBe("Sync my PRs");
+    expect(page.document.querySelector('#withdrawal-panel').hidden).toBe(true);
     expect(page.document.querySelector('.hero-note').textContent).toContain("not code quality or developer productivity");
     expect(page.document.querySelector('.hero-note').textContent).toContain("merged-at UTC month");
     expect(page.document.querySelector('.ranking-heading').textContent).toContain("1 eligible merged PR = 1 point");
     expect(page.document.querySelector('#declarations-help').textContent).toContain("do not affect points");
-    expect(page.document.querySelector('#leaderboard-title').textContent).toBe("VibeRivals rankings");
-    expect(page.document.querySelector('#participation-title').textContent).toBe("Your place in VibeRivals.");
-    expect(page.document.querySelector('.hero .button-primary').textContent).toContain("Join VibeRivals");
+    expect(page.document.querySelector('#leaderboard-title').textContent).toBe("Vibe coding leaderboard");
+    expect(page.document.querySelector('#participation-title').textContent).toBe("Join the vibe coding race.");
+    expect(page.document.querySelector('.hero .button-primary').textContent).toContain("Join the vibe coding race");
     expect(page.document.querySelector('.hero .button-primary').getAttribute("href")).toBe("#participate");
     expect(page.document.querySelector('#leaderboard-status').textContent).toContain("join VibeRivals below");
     expect(`${html}\n${app}`).not.toMatch(/Vibe Coder League|join the league|Leaving the league|Climb the league/i);
@@ -232,6 +243,7 @@ describe("public leaderboard frontend", () => {
     expect(message.textContent).toContain(copy); expect(message.textContent).not.toContain("secret");
     expect(message.className).toContain("error");
     expect(page.document.querySelector("#sync-now").disabled).toBe(false);
+    expect(page.document.querySelector("#sync-now").textContent).toBe("Sync my PRs");
     expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(1);
     if (status === 401) expect(page.document.querySelector("#withdrawal-panel").hidden).toBe(true);
   });
@@ -327,7 +339,7 @@ describe("public leaderboard frontend", () => {
     expect(page.window.getComputedStyle(page.document.querySelector("#participation-form")).display).toBe("none");
   });
 
-  it("keeps Sync now hidden until participation is active", async () => {
+  it("keeps Sync my PRs hidden until participation is active", async () => {
     const page = boot({ handler: (path) => {
       if (path.startsWith("/api/leaderboard")) return json({ rows: [] });
       if (path === "/api/rules") return json({ rules: [] });
@@ -339,7 +351,7 @@ describe("public leaderboard frontend", () => {
     expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(0);
   });
 
-  it("posts Sync now with CSRF but no authority fields, then refreshes without re-syncing", async () => {
+  it("posts Sync my PRs with CSRF but no authority fields, then refreshes without re-syncing", async () => {
     let finishSync;
     const page = boot({ hash: "#/profiles/p1", handler: (path) => {
       if (path.startsWith("/api/leaderboard")) return json({ rows: [] });
@@ -350,12 +362,13 @@ describe("public leaderboard frontend", () => {
       throw new Error(`Unexpected request ${path}`);
     } }); await tick();
     const button = page.document.querySelector("#sync-now"); const message = page.document.querySelector("#sync-message");
+    expect(button.textContent).toBe("Sync my PRs");
     expect(page.document.querySelector("#withdrawal-panel").hidden).toBe(false); expect(message.getAttribute("role")).toBe("status");
     button.click(); button.dispatchEvent(new page.window.Event("click")); await tick();
     expect(button.disabled).toBe(true); expect(button.textContent).toBe("Syncing…"); expect(message.textContent).toContain("Syncing your selected public repository");
     const syncCalls = page.calls.filter(call => call.path === "/api/sync"); expect(syncCalls).toHaveLength(1); expect(syncCalls[0].options.method).toBe("POST"); expect(syncCalls[0].options.headers.get("X-CSRF-Token")).toBe("csrf-1"); expect(syncCalls[0].options.body).toBeUndefined();
     finishSync(); await tick();
-    expect(button.disabled).toBe(false); expect(message.textContent).toContain("Sync complete."); expect(message.className).toContain("success");
+    expect(button.disabled).toBe(false); expect(button.textContent).toBe("Sync my PRs"); expect(message.textContent).toContain("Sync complete."); expect(message.className).toContain("success");
     expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(1); expect(page.calls.filter(call => call.path === "/api/session")).toHaveLength(2); expect(page.calls.filter(call => call.path.startsWith("/api/leaderboard"))).toHaveLength(2); expect(page.calls.filter(call => call.path === "/api/profiles/p1")).toHaveLength(2);
   });
 
@@ -377,6 +390,6 @@ describe("public leaderboard frontend", () => {
     outcome = "partial"; button.click(); await tick();
     expect(message.textContent).toContain("Sync finished with partial results."); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(2);
     outcome = "busy"; button.click(); await tick();
-    expect(message.textContent).toContain("Wait a moment, then use Sync now again."); expect(message.className).toContain("error"); expect(button.disabled).toBe(false); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(3);
+    expect(message.textContent).toContain("Wait a moment, then use Sync my PRs again."); expect(message.className).toContain("error"); expect(button.disabled).toBe(false); expect(page.calls.filter(call => call.path === "/api/sync")).toHaveLength(3);
   });
 });

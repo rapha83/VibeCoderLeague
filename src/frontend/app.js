@@ -155,18 +155,18 @@
   function syncOutcome(payload) { const result = asObject(payload); const status = asText(result.status || result.outcome || result.result, "").toLowerCase(); if (status === "no_eligible_prs") return "no_eligible_prs"; if (result.partial === true || result.complete === false || status === "partial" || status === "incomplete") return "partial"; return status === "complete" || status === "success" ? "success" : "unknown"; }
   const syncMessages = {
     success: "Sync complete. Eligible contributions are updated. Explore the rankings by UTC month.",
-    partial: "Sync finished with partial results. Some pages remain; use Sync now again to continue when ready.",
+    partial: "Sync finished with partial results. Some pages remain; use Sync my PRs again to continue when ready.",
     no_eligible_prs: "Sync finished. No eligible merged pull requests were found for your selected public repository. Check the rules and your merged contributions on GitHub.",
     unknown: "The sync result could not be confirmed. Check your participation status and rankings before manually trying again."
   };
   function syncErrorMessage(error) {
     const payload = asObject(error.payload);
     if (error.status === 401) return "Your session expired. Reconnect GitHub before syncing again.";
-    if (error.status === 409 && payload.status === "busy") return "A sync is already running for your selected public repository. Wait a moment, then use Sync now again.";
+    if (error.status === 409 && payload.status === "busy") return "A sync is already running for your selected public repository. Wait a moment, then use Sync my PRs again.";
     if (error.status === 409 && payload.error === "sync_not_available") return "Sync is unavailable for this selection. Refresh your session and review consent and public repository access before trying again.";
     if (error.status === 429) return "Sync request limit reached. Wait before manually trying again.";
     if (error.status === 403) return "Sync is not permitted. Refresh your session and review repository access and consent before trying again.";
-    let message = "Sync could not be completed. Your score update is not confirmed. Wait a moment, then use Sync now again.";
+    let message = "Sync could not be completed. Your score update is not confirmed. Wait a moment, then use Sync my PRs again.";
     // Display only a bounded opaque support identifier, never upstream messages.
     const diagnostic = asObject(payload.diagnostic);
     const reference = diagnostic.correlationId || payload.correlationId;
@@ -219,7 +219,7 @@
       const activeProfile = profileRouteFromHash(); await Promise.allSettled([loadSession(), loadLeaderboard(), activeProfile ? loadProfile(activeProfile) : Promise.resolve()]);
       setMessage(message, syncMessages[outcome], outcome === "success" ? "success" : outcome === "unknown" ? "error" : "");
     } catch (error) { setMessage(message, syncErrorMessage(error), "error"); }
-    finally { state.syncBusy = false; button.removeAttribute("aria-busy"); setButtonBusy(button, false, "Sync now"); }
+    finally { state.syncBusy = false; button.removeAttribute("aria-busy"); setButtonBusy(button, false, "Sync my PRs"); }
   });
   monthInput.value = currentMonth(); monthInput.addEventListener("change", loadLeaderboard); $("#leaderboard-retry").addEventListener("click", loadLeaderboard); $("#rules-retry").addEventListener("click", loadRules); $("#profile-retry").addEventListener("click", route); window.addEventListener("hashchange", route);
   loadLeaderboard(); loadRules(); loadSession(); route();

@@ -3,17 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="VibeRivals — The vibe coding competition. Build with AI. Merge. Climb. Monthly UTC rankings award 1 point per eligible merged PR, not code quality or productivity." />
-    <title>VibeRivals — The vibe coding competition</title>
+    <meta name="description" content="Vibe Coding Rivals — The vibe coding competition. Compete with builders using AI. Monthly UTC rankings award 1 point per eligible merged PR, not code quality or productivity. Tools and models are self-declared, unverified." />
+    <title>Vibe Coding Rivals — The vibe coding competition</title>
     <link rel="canonical" href="https://viberivals.com/" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="VibeRivals" />
-    <meta property="og:title" content="VibeRivals — The vibe coding competition" />
-    <meta property="og:description" content="Build with AI. Merge. Climb. Explore monthly UTC merged-PR rankings and self-declared AI tools and models. 1 eligible merged PR = 1 point; not a quality or productivity measure." />
+    <meta property="og:title" content="Vibe Coding Rivals — The vibe coding competition" />
+    <meta property="og:description" content="The vibe coding competition for builders using AI. Monthly UTC rankings: 1 eligible merged PR = 1 point, not a quality or productivity measure. Tools and models are self-declared, unverified." />
     <meta property="og:url" content="https://viberivals.com/" />
     <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="VibeRivals — The vibe coding competition" />
-    <meta name="twitter:description" content="Build with AI. Merge. Climb. Explore monthly UTC merged-PR rankings and self-declared AI tools and models. 1 eligible merged PR = 1 point; not a quality or productivity measure." />
+    <meta name="twitter:title" content="Vibe Coding Rivals — The vibe coding competition" />
+    <meta name="twitter:description" content="The vibe coding competition for builders using AI. Monthly UTC rankings: 1 eligible merged PR = 1 point, not a quality or productivity measure. Tools and models are self-declared, unverified." />
     <link rel="stylesheet" href="/styles.css" />
     <script src="/app.js" defer></script>
   </head>
@@ -22,7 +22,7 @@
     <header class="site-header">
       <div class="shell header-content">
         <a class="wordmark" href="/" aria-label="VibeRivals home">Vibe<span>Rivals</span></a>
-        <nav aria-label="Main navigation"><a class="header-link" href="#leaderboard">Rankings</a><a class="header-link" href="#participate">Join VibeRivals</a></nav>
+        <nav aria-label="Main navigation"><a class="header-link" href="#leaderboard">Leaderboard</a><a class="header-link" href="#participate">Join the race</a></nav>
       </div>
     </header>
 
@@ -31,14 +31,16 @@
         <div class="shell hero-grid">
           <div>
             <p class="eyebrow">The vibe coding competition</p>
-            <h1 id="page-title">Build with AI.<br /><span>Merge. Climb.</span></h1>
-            <p class="hero-copy">A public competition for vibe coders building with AI. Compare merged pull requests each UTC month and explore the tools and models participants choose to share.</p>
-            <a class="button button-primary" href="#participate">Join VibeRivals <span aria-hidden="true">↗</span></a>
-            <a class="hero-ranking-link" href="#leaderboard">Explore rankings ↓</a>
+            <h1 id="page-title">Vibe Coding <span>Rivals</span></h1>
+            <p class="hero-copy">Compete with builders using AI. Ship merged PRs, climb the monthly UTC leaderboard, and discover the tools and models other rivals share — self-declared, unverified.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#participate">Join the vibe coding race <span aria-hidden="true">↗</span></a>
+              <a class="hero-ranking-link" href="#leaderboard">View the leaderboard <span aria-hidden="true">↓</span></a>
+            </div>
           </div>
           <aside class="hero-note" aria-label="VibeRivals scoring and participation">
             <p class="eyebrow">The scoring protocol</p>
-            <p class="protocol-score">1 merged PR <span>= 1 point</span></p>
+            <p class="protocol-score">1 eligible merged PR <span>= 1 point</span></p>
             <p>Counted in its merged-at UTC month. Only opted-in contributions from currently public, accessible repositories are published. Points count eligible merged PRs, not code quality or developer productivity.</p>
             <p class="quiet">Your repo. Your choice. Withdraw consent at any time.</p>
           </aside>
@@ -50,7 +52,7 @@
           <div class="section-heading">
             <div>
               <p class="eyebrow">VibeRivals / Monthly rankings</p>
-              <h2 id="leaderboard-title">VibeRivals rankings</h2>
+              <h2 id="leaderboard-title">Vibe coding leaderboard</h2>
             </div>
             <label class="month-control" for="month-picker">
               <span>Season / UTC month</span>
@@ -78,7 +80,7 @@
 
       <section id="profile" class="section section-tint" aria-labelledby="profile-title" hidden>
         <div class="shell profile-panel">
-          <a class="header-link" href="#leaderboard">← Back to rankings</a>
+          <a class="header-link" href="#leaderboard">← Back to leaderboard</a>
           <p class="eyebrow">VibeRivals / Public participant profile</p>
           <h2 id="profile-title" tabindex="-1">Participant profile</h2>
           <div id="profile-content"></div>
@@ -91,7 +93,7 @@
         <div class="shell two-column">
           <div>
             <p class="eyebrow">How it works</p>
-            <h2 id="rules-title">Rules and participation</h2>
+            <h2 id="rules-title">Rules of the race</h2>
             <p>Read the current rules before choosing to participate. The information below comes from the service.</p>
           </div>
           <div class="rules-panel">
@@ -106,11 +108,11 @@
         <div class="shell two-column">
           <div>
             <p class="eyebrow">Your choice</p>
-            <h2 id="participation-title">Your place in VibeRivals.</h2>
+            <h2 id="participation-title">Join the vibe coding race.</h2>
             <ol class="journey-steps" aria-label="Participation steps">
               <li><strong>Connect GitHub</strong><span>Review your eligible public repositories.</span></li>
               <li><strong>Choose &amp; consent</strong><span>Nothing is enrolled automatically.</span></li>
-              <li><strong>Sync contributions</strong><span>Publish eligible merged PRs. Withdraw any time.</span></li>
+              <li><strong>Sync your PRs</strong><span>Publish eligible merged PRs. Withdraw any time.</span></li>
             </ol>
             <p>GitHub connection lets this site show the eligible public repositories associated with your session. Nothing is selected until you choose it and confirm consent.</p>
             <p class="quiet">AI coding tools and models are optional self-descriptions. They are not verified and do not affect points.</p>
@@ -149,7 +151,7 @@
               <p class="eyebrow">Participation active</p>
               <h3>Your contribution control room</h3>
               <p>Sync your selected public repository to update eligible contributions. Rankings use the selected UTC month; sync imports repository contributions.</p>
-              <button id="sync-now" class="button button-primary" type="button">Sync now</button>
+              <button id="sync-now" class="button button-primary" type="button">Sync my PRs</button>
               <p id="sync-message" class="form-message" role="status" aria-live="polite"></p>
               <div class="withdrawal-zone"><p>Leaving VibeRivals? Withdrawing consent removes you from public participation.</p>
               <button id="withdraw-consent" class="button button-danger" type="button">Withdraw consent</button></div>

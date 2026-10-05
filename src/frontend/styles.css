@@ -23,9 +23,12 @@ p { overflow-wrap:anywhere; } h1,h2,h3 { text-wrap:balance; }
 .hero h1,.section h2 { font-family:inherit; line-height:1.08; }
 .section h2 { font-size:clamp(2rem,4vw,3rem); }
 .hero h1 { max-width:none; font-size:clamp(2.5rem,6vw,5rem); }
-.hero h1 span { color:var(--orange); }
+.hero h1 span { display:block; color:var(--orange); }
+.hero-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1.25rem; }
+.hero-actions > a { max-width:100%; }
+.hero-actions .button { text-align:center; }
 .hero-copy { color:var(--muted); }
-.hero-ranking-link { margin-left:1.25rem; display:inline-block; padding:.75rem 0; font-size:.9rem; }
+.hero-ranking-link { display:inline-flex; align-items:center; gap:.5rem; min-height:2.8rem; padding:.75rem 0; font-size:.9rem; }
 .hero-note,.participation-panel,.rules-panel,.profile-panel { border-radius:.75rem; min-width:0; padding:clamp(1.25rem,3vw,2rem); }
 .hero-note { margin-top:1.5rem; border-top:1px solid var(--line); }
 .protocol-score { font:700 clamp(1.4rem,2.8vw,2rem)/1.4 var(--mono); letter-spacing:-.04em; }
