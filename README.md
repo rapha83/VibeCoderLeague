@@ -9,6 +9,14 @@ A **public, opt-in monthly leaderboard** for merged GitHub pull requests from ex
 
 This Cloudflare Free MVP has Worker code, D1 migrations, static frontend, a dedicated D1 binding, and local tests. Production targets the existing Worker `vibecoderleague` at `https://vibecoderleague.grumpzillax.workers.dev` and its dedicated database `vibe-coder-league` (`a5fcb38c-026a-4bd3-9f93-a2822cf067b4`). GitHub App configuration is stored only as Worker secrets; cron remains disabled until a separate, evidenced end-to-end authorization and opt-in journey.
 
+## Ranking eligibility and manual validation
+
+A contribution counts only when the PR is **merged**, its GitHub PR author has opted in, and its repository is explicitly selected and currently public. The merge timestamp determines the UTC ranking month; commit authors, the person who merges, standalone commits, and deployments do not earn points. Each eligible PR contributes one point, and repeating a sync must not count the same PR again.
+
+After a real contribution is merged, sign in as the participant, confirm participation and repository selection, then click **Sync now**. View the ranking for the merge's UTC month; allow up to 60 seconds for the public cache to refresh. An empty ranking can be expected when there are no eligible merged PRs, even if commits or deployments already exist.
+
+A useful documentation PR can validate ingestion and a one-point entry. This is a legitimate documentation/validation contribution, not evidence of productivity, quality, or a three-person podium; those require separate evidence. The application uses read-only GitHub access and does not create or merge PRs for participants.
+
 ## Quick start
 
 ```sh
