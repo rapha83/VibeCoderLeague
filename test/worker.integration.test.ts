@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { Miniflare } from "miniflare";
-import { createApp, runScheduledSync, syncConsent, SyncWorkBudget, type Env } from "../src/worker";
+import worker, { createApp, runScheduledSync, syncConsent, SyncWorkBudget, type Env } from "../src/worker";
 
 const migration = (name: string) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8");
 const origin = "https://league.example";
@@ -20,6 +20,31 @@ const cookieValue = (response: Response, name: string) => response.headers.getSe
 describe("worker OAuth and public profile integration", () => {
   const fixtures: Miniflare[] = [];
   afterEach(async () => { await Promise.all(fixtures.splice(0).map(mf => mf.dispose())); vi.unstubAllGlobals(); });
+
+  it("guards old-origin root, assets, APIs and callback before any state or fetch access", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    const assets = vi.fn(() => new Response("asset")); bindings.ASSETS = { fetch: assets };
+    const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
+    const ctx = { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext;
+    for (const path of ["/", "/app.js", "/style.css", "//evil.example/path"]) {
+      const response = await worker.fetch(new Request(`https://old.example${path}?code=secret&state=secret`), bindings, ctx);
+      expect(response.status).toBe(308);
+      expect(response.headers.get("Location")).toBe(`${origin}${path}`);
+      expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+    }
+    for (const path of ["/api/session", "/api/auth/github", "/api/sync"]) for (const method of ["GET", "POST"]) {
+      const response = await worker.fetch(new Request(`https://old.example${path}`, { method, headers: { Cookie: "__Host-vcl=fake", Origin: origin } }), bindings, ctx);
+      expect(response.status).toBe(421); expect(response.headers.has("Location")).toBe(false);
+    }
+    const callback = await worker.fetch(new Request("https://old.example/api/auth/github/callback?code=secret&state=secret"), bindings, ctx);
+    expect(callback.status).toBe(303); expect(callback.headers.get("Location")).toBe(`${origin}/api/auth/github`);
+    expect((await worker.fetch(new Request("https://old.example/", { method: "POST", body: "secret" }), bindings, ctx)).status).toBe(421);
+    expect(assets).not.toHaveBeenCalled(); expect(upstream).not.toHaveBeenCalled();
+    expect(await DB.prepare("SELECT COUNT(*) count FROM oauth_states").first()).toEqual({ count: 0 });
+    expect(await (await worker.fetch(new Request(`${origin}/app.js`), bindings, ctx)).text()).toBe("asset");
+    expect(assets).toHaveBeenCalledTimes(1);
+    expect((await createApp().request("https://old.example/api/session", {}, bindings)).status).toBe(421);
+  });
 
   it("adds current public declarations to every leaderboard row without changing scores or ordering", async () => {
     const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
@@ -236,10 +261,31 @@ describe("manual post-consent sync integration", () => {
     if (url.includes("/repositories")) return new Response(JSON.stringify({ repositories: [{ node_id: "r1", full_name: "octo/public", private: false }] }));
     if (url.endsWith("/graphql")) {
       const query = JSON.parse(String(init?.body)).query as string;
-      if (query.includes("query Repo")) return new Response(JSON.stringify({ data: { repository: { id: "r1", nameWithOwner: "octo/public", visibility } } }));
-      return new Response(JSON.stringify({ data: { repository: { visibility, pullRequests: { nodes: pulls, pageInfo: { endCursor: null, hasNextPage: false } } } } }));
+      if (query.includes("query Repo")) return new Response(JSON.stringify({ data: { repository: { __typename: "Repository", id: "r1", nameWithOwner: "octo/public", visibility } } }));
+      return new Response(JSON.stringify({ data: { repository: { __typename: "Repository", id: "r1", nameWithOwner: "octo/public", visibility, pullRequests: { nodes: pulls, pageInfo: { endCursor: null, hasNextPage: false } } } } }));
     }
     throw new Error(`unexpected fetch ${url}`);
+  });
+
+  it("refreshes renamed repository metadata without changing identity or counting a PR twice", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    await selected(DB);
+    await DB.prepare("UPDATE consents SET declared_tooling='Cursor',declared_model='Model A' WHERE github_id='u1'").run();
+    await DB.prepare("INSERT INTO pull_requests(pr_id,repo_id,repo_name,author_id,author_login,merged_at,month_utc,generation) VALUES('pr1','r1','octo/public','u1','octo','2025-01-10T00:00:00Z','2025-01',1)").run();
+    const consent = { github_id: "u1", repo_id: "r1", repo_name: "octo/public", installation_id: "i1", declared_tooling: "Cursor", declared_model: "Model A" };
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.variables).toEqual({ id: "r1", after: null });
+      expect(body.query).toContain("repository:node(id:$id)");
+      expect(String(init?.body)).not.toContain("octo/public");
+      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer installation-token");
+      return Response.json({ data: { repository: { __typename: "Repository", id: "r1", nameWithOwner: "octo/VibeRivals", visibility: "PUBLIC", pullRequests: { nodes: [{ id: "pr1", mergedAt: "2025-01-10T00:00:00Z", author: { id: "u1", login: "octo" } }], pageInfo: { endCursor: null, hasNextPage: false } } } } });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    for (let i = 0; i < 2; i++) expect(await syncConsent(bindings, consent, "installation-token")).toEqual({ status: "complete" });
+    expect(await DB.prepare("SELECT github_id,repo_id,repo_name,installation_id,active,visibility,declared_tooling,declared_model FROM consents").first()).toEqual({ github_id: "u1", repo_id: "r1", repo_name: "octo/VibeRivals", installation_id: "i1", active: 1, visibility: "public", declared_tooling: "Cursor", declared_model: "Model A" });
+    expect((await DB.prepare("SELECT pr_id,repo_id,repo_name,author_id,merged_at,month_utc FROM pull_requests").all()).results).toEqual([{ pr_id: "pr1", repo_id: "r1", repo_name: "octo/VibeRivals", author_id: "u1", merged_at: "2025-01-10T00:00:00Z", month_utc: "2025-01" }]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("rejects unauthenticated and CSRF-invalid requests before any GitHub or sync work", async () => {
@@ -439,7 +485,7 @@ describe("manual post-consent sync integration", () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/user/installations")) return new Response(JSON.stringify({ installations: [{ id: 84 }] }));
       if (url.includes("/repositories")) return new Response(JSON.stringify({ repositories: [{ node_id: "r2", full_name: "octo/next-public", private: false }] }));
-      if (url.endsWith("/graphql")) return new Response(JSON.stringify({ data: { repository: { id: "r2", nameWithOwner: "octo/next-public", visibility: "PUBLIC" } } }));
+      if (url.endsWith("/graphql")) return new Response(JSON.stringify({ data: { repository: { __typename: "Repository", id: "r2", nameWithOwner: "octo/next-public", visibility: "PUBLIC" } } }));
       throw new Error(`unexpected fetch ${url} ${String(init?.body)}`);
     }));
     const response = await createApp().request(`${origin}/api/selections`, { method: "POST", headers: { Cookie: auth.cookie, Origin: origin, "X-CSRF-Token": auth.csrfToken, "Content-Type": "application/json" }, body: JSON.stringify({ consent: true, repoId: "r2" }) }, bindings);
@@ -485,7 +531,7 @@ describe("scheduled sync budget integration", () => {
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       const after = (JSON.parse(String(init?.body)).variables.after ?? null) as string | null; cursors.push(after);
       const first = after === null;
-      return new Response(JSON.stringify({ data: { repository: { visibility: "PUBLIC", pullRequests: { nodes: [], pageInfo: { endCursor: first ? "cursor-1" : null, hasNextPage: first } } } } }));
+      return new Response(JSON.stringify({ data: { repository: { __typename: "Repository", id: "r-u1", nameWithOwner: "octo/u1", visibility: "PUBLIC", pullRequests: { nodes: [], pageInfo: { endCursor: first ? "cursor-1" : null, hasNextPage: first } } } } }));
     }));
     const consent = { github_id: "u1", repo_id: "r-u1", repo_name: "octo/u1", installation_id: "i-u1", declared_tooling: null, declared_model: null };
     await syncConsent(bindings, consent, "token", 2, new SyncWorkBudget(1));

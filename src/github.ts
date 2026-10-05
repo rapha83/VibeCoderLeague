@@ -28,7 +28,7 @@ const graph = async (token: string, query: string, variables: Record<string, unk
 };
 
 // This fixed document deliberately excludes title, body, files, patches, review text and source content.
-const PULLS_QUERY = `query LeaguePulls($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){id nameWithOwner visibility pullRequests(first:50,after:$after,states:MERGED,orderBy:{field:UPDATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor}nodes{id mergedAt author{... on User{id login avatarUrl}}}}}}`;
+const PULLS_QUERY = `query LeaguePulls($id:ID!,$after:String){repository:node(id:$id){... on Repository{__typename id nameWithOwner visibility pullRequests(first:50,after:$after,states:MERGED,orderBy:{field:UPDATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor}nodes{id mergedAt author{... on User{id login avatarUrl}}}}}}}`;
 
 export type ViewerDiagnosticCategory = "http_error" | "transport_error" | "invalid_json" | "invalid_user_shape";
 export type ViewerDiagnostic = { category: ViewerDiagnosticCategory; status: number };
@@ -63,18 +63,21 @@ export class GitHubClient {
     return result;
   }
   async publicRepo(repo: Repo): Promise<Repo> {
-    const [owner, name] = repo.nameWithOwner.split("/");
-    if (!owner || !name) throw new Error("invalid_repo");
-    const data = await graph(this.userToken, `query Repo($owner:String!,$name:String!){repository(owner:$owner,name:$name){id nameWithOwner visibility}}`, { owner, name }, this.fetcher);
-    const found = data.data?.repository;
-    if (!found || found.id !== repo.id || found.visibility !== "PUBLIC") throw new Error("repo_not_public");
+    const data = await graph(this.userToken, `query Repo($id:ID!){repository:node(id:$id){... on Repository{__typename id nameWithOwner visibility}}}`, { id: repo.id }, this.fetcher);
+    const found = data.data.repository;
+    if (found === null) throw new Error("repo_not_public");
+    this.validateRepository(found ?? {}, repo.id);
+    if (found.visibility !== "PUBLIC") throw new Error("repo_not_public");
     return found;
   }
-  async pulls(repo: Repo, after: string | null): Promise<{ pulls: Pull[]; cursor: string | null; hasNext: boolean; visibility: string }> {
-    const [owner, name] = repo.nameWithOwner.split("/");
-    const data = await graph(this.userToken, PULLS_QUERY, { owner, name, after }, this.fetcher);
-    const found = data.data?.repository;
-    if (!found) throw new Error("repo_inaccessible");
+  private validateRepository(found: any, id: string): void {
+    if (found.__typename !== "Repository" || found.id !== id || typeof found.nameWithOwner !== "string" || !/^[^/]+\/[^/]+$/.test(found.nameWithOwner) || !["PUBLIC", "PRIVATE", "INTERNAL"].includes(found.visibility)) throw new GitHubRequestError("invalid_response", 200);
+  }
+  async pulls(repo: Repo, after: string | null): Promise<{ pulls: Pull[]; cursor: string | null; hasNext: boolean; visibility: string; nameWithOwner: string }> {
+    const data = await graph(this.userToken, PULLS_QUERY, { id: repo.id, after }, this.fetcher);
+    const found = data.data.repository;
+    if (found === null) throw new Error("repo_inaccessible");
+    this.validateRepository(found ?? {}, repo.id);
     const connection = found.pullRequests, info = connection?.pageInfo;
     // The User-only fragment returns {} for Bot/Organization actors; those are not eligible users.
     const nodes = Array.isArray(connection?.nodes) ? connection.nodes.map((pull: any) => pull?.author && typeof pull.author === "object" && Object.keys(pull.author).length === 0 ? { ...pull, author: null } : pull) : null;
@@ -84,7 +87,7 @@ export class GitHubClient {
           !(pull.author === null || (pull.author && typeof pull.author.id === "string" && typeof pull.author.login === "string")))) {
       throw new GitHubRequestError("invalid_response", 200);
     }
-    return { pulls: nodes, cursor: info.endCursor, hasNext: info.hasNextPage, visibility: found.visibility };
+    return { pulls: nodes, cursor: info.endCursor, hasNext: info.hasNextPage, visibility: found.visibility, nameWithOwner: found.nameWithOwner };
   }
   private async rest(path: string, viewerDiagnostic = false): Promise<any> {
     if (!viewerDiagnostic) return requestJson(`${API}${path}`, { method: "GET", headers: { Authorization: `Bearer ${this.userToken}`, Accept: "application/vnd.github+json", "User-Agent": "vibe-coder-league" } }, this.fetcher);

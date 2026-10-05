@@ -9,22 +9,38 @@ describe("sync GitHub failures cannot become empty contributions", () => {
   afterEach(() => vi.useRealTimers());
   it.each([
     { errors: [{ message: "secret sentinel", type: "FORBIDDEN" }], data: { repository: null } },
-    { errors: [{ message: "secret sentinel" }], data: { repository: { visibility: "PUBLIC", pullRequests: connection } } }
+    { errors: [{ message: "secret sentinel" }], data: { repository: { __typename: "Repository", id: "r1", nameWithOwner: "octo/public", visibility: "PUBLIC", pullRequests: connection } } }
   ])("rejects GraphQL errors including HTTP-200 partial data", async data => {
     await expect(client(data).pulls(repo, null)).rejects.toMatchObject({ category: "graphql_error", status: 200, message: "github_request_failed" });
     await expect(client(data).publicRepo(repo)).rejects.toMatchObject({ category: "graphql_error", status: 200 });
   });
   it.each([
     {}, { data: {} },
-    { data: { repository: { visibility: "PUBLIC", pullRequests: { pageInfo: connection.pageInfo } } } },
-    { data: { repository: { visibility: "PUBLIC", pullRequests: { ...connection, pageInfo: { hasNextPage: true, endCursor: null } } } } },
-    { data: { repository: { visibility: "PUBLIC", pullRequests: { ...connection, nodes: [{ id: "p", mergedAt: "invalid", author: null }] } } } }
+    { data: { repository: { __typename: "Repository", id: "r1", nameWithOwner: "octo/public", visibility: "PUBLIC", pullRequests: { pageInfo: connection.pageInfo } } } },
+    { data: { repository: { __typename: "Repository", id: "r1", nameWithOwner: "octo/public", visibility: "PUBLIC", pullRequests: { ...connection, pageInfo: { hasNextPage: true, endCursor: null } } } } },
+    { data: { repository: { __typename: "Repository", id: "r1", nameWithOwner: "octo/public", visibility: "PUBLIC", pullRequests: { ...connection, nodes: [{ id: "p", mergedAt: "invalid", author: null }] } } } }
   ])("rejects malformed pages rather than defaulting to zero", async data => {
     await expect(client(data).pulls(repo, null)).rejects.toMatchObject({ category: "invalid_response", status: 200 });
   });
+  it.each([
+    { __typename: "Repository", id: "other", nameWithOwner: "octo/new", visibility: "PUBLIC" },
+    { __typename: "User", id: "r1", nameWithOwner: "octo/new", visibility: "PUBLIC" },
+    { __typename: "Repository", id: "r1", nameWithOwner: "invalid", visibility: "PUBLIC" },
+    {}
+  ])("rejects mismatched ID/type/name as retryable errors, not retraction", async found => {
+    await expect(client({ data: { repository: { ...found, pullRequests: connection } } }).pulls(repo, null)).rejects.toMatchObject({ category: "invalid_response" });
+  });
+  it("resolves metadata by immutable ID even when the stored name is stale", async () => {
+    const fetcher = vi.fn(async (_url, init) => {
+      expect(JSON.parse(String(init?.body)).variables).toEqual({ id: "r1" });
+      expect(String(init?.body)).not.toContain("octo/public");
+      return Response.json({ data: { repository: { __typename: "Repository", id: "r1", nameWithOwner: "octo/new", visibility: "PUBLIC" } } });
+    });
+    expect((await new GitHubClient("fake", fetcher as typeof fetch).publicRepo(repo)).nameWithOwner).toBe("octo/new");
+  });
   it("accepts a valid empty page and excludes non-User fragment actors", async () => {
-    await expect(client({ data: { repository: { visibility: "PUBLIC", pullRequests: connection } } }).pulls(repo, null)).resolves.toEqual({ visibility: "PUBLIC", pulls: [], cursor: null, hasNext: false });
-    const result = await client({ data: { repository: { visibility: "PUBLIC", pullRequests: { ...connection, nodes: [{ id: "bot-pr", mergedAt: "2026-10-01T00:00:00Z", author: {} }] } } } }).pulls(repo, null);
+    await expect(client({ data: { repository: { __typename: "Repository", id: "r1", nameWithOwner: "octo/public", visibility: "PUBLIC", pullRequests: connection } } }).pulls(repo, null)).resolves.toEqual({ nameWithOwner: "octo/public", visibility: "PUBLIC", pulls: [], cursor: null, hasNext: false });
+    const result = await client({ data: { repository: { __typename: "Repository", id: "r1", nameWithOwner: "octo/public", visibility: "PUBLIC", pullRequests: { ...connection, nodes: [{ id: "bot-pr", mergedAt: "2026-10-01T00:00:00Z", author: {} }] } } } }).pulls(repo, null);
     expect(result.pulls[0].author).toBeNull();
   });
   it("separates HTTP, malformed JSON, and transport failures without leaking messages", async () => {

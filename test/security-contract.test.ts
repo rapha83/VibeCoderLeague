@@ -86,7 +86,7 @@ describe("GitHub boundary", () => {
     const calls: Array<{ url: string; body?: string }> = [];
     const fetcher = async (url: string | URL, init?: RequestInit) => {
       calls.push({ url: String(url), body: String(init?.body ?? "") });
-      if (String(url).endsWith("/graphql")) return new Response(JSON.stringify({ data: { repository: { id: "R_1", nameWithOwner: "octo/public", visibility: "PUBLIC", pullRequests: { nodes: [{ id: "PR_1", mergedAt: "2025-01-31T23:59:59Z", author: { id: "U_1", login: "octo", avatarUrl: "https://avatar" } }], pageInfo: { endCursor: null, hasNextPage: false } } } } }));
+      if (String(url).endsWith("/graphql")) return new Response(JSON.stringify({ data: { repository: { __typename: "Repository", id: "R_1", nameWithOwner: "octo/public", visibility: "PUBLIC", pullRequests: { nodes: [{ id: "PR_1", mergedAt: "2025-01-31T23:59:59Z", author: { id: "U_1", login: "octo", avatarUrl: "https://avatar" } }], pageInfo: { endCursor: null, hasNextPage: false } } } } }));
       return new Response(JSON.stringify({ installations: [], repositories: [] }));
     };
     const client = new GitHubClient("token", fetcher as typeof fetch);
@@ -113,7 +113,8 @@ describe("activation configuration", () => {
     expect(wrangler).toMatch(/^name\s*=\s*"vibecoderleague"\s*$/m);
     expect(wrangler).toMatch(/^workers_dev\s*=\s*true\s*$/m);
     expect(wrangler).not.toMatch(/^workers_dev\s*=\s*false\s*$/m);
-    expect(wrangler).toMatch(/^PUBLIC_ORIGIN\s*=\s*"https:\/\/vibecoderleague\.grumpzillax\.workers\.dev"\s*$/m);
+    expect(wrangler).toMatch(/^PUBLIC_ORIGIN\s*=\s*"https:\/\/viberivals\.com"\s*$/m);
+    expect(wrangler).toMatch(/^run_worker_first\s*=\s*true\s*$/m);
     expect(wrangler).not.toMatch(/^\s*\[triggers\]\s*$/m);
     expect(wrangler).toMatch(/database_id\s*=\s*"a5fcb38c-026a-4bd3-9f93-a2822cf067b4"/);
   });
@@ -150,7 +151,7 @@ describe("publication safety contract", () => {
   it("retries active unknown visibility and restores public only through the current lease before PR writes", () => {
     const worker = readRepositoryFile("../src/worker.ts");
     const scheduledQuery = "FROM consents WHERE active=1 AND visibility IN ('public','unknown')";
-    const restore = "UPDATE consents SET visibility='public',updated_at=? WHERE github_id=? AND repo_id=? AND active=1 AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?)";
+    const restore = "UPDATE consents SET repo_name=?,visibility='public',updated_at=? WHERE github_id=? AND repo_id=? AND active=1 AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?)";
     expect(worker).toContain(scheduledQuery);
     expect(worker).toContain(restore);
     expect(worker.indexOf(restore)).toBeLessThan(worker.indexOf("INSERT INTO pull_requests"));

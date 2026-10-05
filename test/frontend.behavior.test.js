@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 function boot({ hash = "", handler } = {}) {
-  const window = new Window({ url: `https://league.test/${hash}` });
+  const window = new Window({ url: `https://viberivals.com/${hash}` });
   window.document.write(html); window.document.close();
   const style = window.document.createElement("style"); style.textContent = styles; window.document.head.append(style);
   const calls = [];
@@ -41,6 +41,49 @@ const anonymous = (path) => {
 };
 
 describe("public leaderboard frontend", () => {
+  it("presents VibeRivals branding, canonical share metadata and transparent AI competition scoring", async () => {
+    const page = boot({ handler: anonymous }); await tick();
+    const meta = selector => page.document.querySelector(selector).getAttribute("content");
+    expect(page.document.title).toBe("VibeRivals — The vibe coding competition");
+    expect(page.document.querySelector('.hero .eyebrow').textContent).toBe("The vibe coding competition");
+    expect(page.document.querySelector('.wordmark').textContent).toBe("VibeRivals");
+    expect(page.document.querySelector('.wordmark').getAttribute("aria-label")).toBe("VibeRivals home");
+    expect(page.document.querySelector('#page-title').textContent).toBe("Build with AI.Merge. Climb.");
+    expect(page.document.querySelector('link[rel="canonical"]').href).toBe("https://viberivals.com/");
+    expect(meta('meta[property="og:url"]')).toBe("https://viberivals.com/");
+    expect(meta('meta[property="og:site_name"]')).toBe("VibeRivals");
+    for (const selector of ['meta[property="og:title"]', 'meta[name="twitter:title"]']) expect(meta(selector)).toBe(page.document.title);
+    for (const selector of ['meta[name="description"]', 'meta[property="og:description"]', 'meta[name="twitter:description"]']) {
+      expect(meta(selector).toLowerCase()).toContain("monthly utc");
+      expect(meta(selector)).toContain("quality or productivity");
+    }
+    expect(meta('meta[name="twitter:card"]')).toBe("summary");
+    expect(page.document.querySelector('.hero-copy').textContent).toContain("tools and models");
+    expect(page.document.querySelector('.hero-note').textContent).toContain("not code quality or developer productivity");
+    expect(page.document.querySelector('.hero-note').textContent).toContain("merged-at UTC month");
+    expect(page.document.querySelector('.ranking-heading').textContent).toContain("1 eligible merged PR = 1 point");
+    expect(page.document.querySelector('#declarations-help').textContent).toContain("do not affect points");
+    expect(page.document.querySelector('#leaderboard-title').textContent).toBe("VibeRivals rankings");
+    expect(page.document.querySelector('#participation-title').textContent).toBe("Your place in VibeRivals.");
+    expect(page.document.querySelector('.hero .button-primary').textContent).toContain("Join VibeRivals");
+    expect(page.document.querySelector('.hero .button-primary').getAttribute("href")).toBe("#participate");
+    expect(page.document.querySelector('#leaderboard-status').textContent).toContain("join VibeRivals below");
+    expect(`${html}\n${app}`).not.toMatch(/Vibe Coder League|join the league|Leaving the league|Climb the league/i);
+  });
+
+  it("keeps monthly profile routing and self-declared AI context under the VibeRivals identity", async () => {
+    const page = boot({ hash: "#/profiles/coder?month=2026-09", handler: path => path === "/api/profiles/coder?month=2026-09" ? json({ profile: { displayName: "Coder", month: "2026-09", repositories: [{ pullRequests: 3 }], declarations: { status: "self_declared_unverified", tooling: ["Codex"], models: ["Custom model"] } } }) : anonymous(path) }); await tick();
+    expect(page.document.querySelector('#profile').hidden).toBe(false);
+    expect(page.document.querySelector('#profile .eyebrow').textContent).toContain("VibeRivals");
+    const content = page.document.querySelector('#profile-content').textContent;
+    expect(content).toContain("This VibeRivals profile");
+    expect(content).toContain("not a measure of code quality or developer productivity");
+    expect(content).toContain("Codex"); expect(content).toContain("Custom model");
+    expect(content).toContain("self-declared — unverified");
+    expect(page.document.querySelector('.profile-stats').textContent).toContain("Merged pull requests in 2026-09");
+    expect(page.document.querySelector('.profile-stats').lastElementChild.querySelector('dd').textContent).toBe("3");
+  });
+
   it("offers recognized optional tools with complete keyboard and custom controls", async () => {
     const page = boot({ handler: path => path === "/api/session" ? json({ authenticated: true, csrfToken: "csrf" }) : path === "/api/repos" ? json({ repos: [{ id: "1", fullName: "a/b" }] }) : anonymous(path) }); await tick();
     const input = page.document.querySelector("#declared-tooling"); const model = page.document.querySelector("#declared-model"); const list = page.document.querySelector("#tool-options");

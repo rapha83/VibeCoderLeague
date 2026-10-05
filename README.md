@@ -1,4 +1,4 @@
-# Vibe Coder League
+# VibeRivals
 
 A **public, opt-in monthly leaderboard** for merged GitHub pull requests from explicitly selected, currently public repositories.
 
@@ -7,7 +7,22 @@ A **public, opt-in monthly leaderboard** for merged GitHub pull requests from ex
 - Tooling/model attribution is optional, self-declared, and labelled **unverified**.
 - Withdrawal or a repository becoming private/inaccessible removes affected contribution records from public output.
 
-This Cloudflare Free MVP has Worker code, D1 migrations, static frontend, a dedicated D1 binding, and local tests. Production targets the existing Worker `vibecoderleague` at `https://vibecoderleague.grumpzillax.workers.dev` and its dedicated database `vibe-coder-league` (`a5fcb38c-026a-4bd3-9f93-a2822cf067b4`). GitHub App configuration is stored only as Worker secrets; cron remains disabled until a separate, evidenced end-to-end authorization and opt-in journey.
+This Cloudflare Free MVP has Worker code, D1 migrations, static frontend, a dedicated D1 binding, and local tests. Production home is **https://viberivals.com**; the existing Worker remains `vibecoderleague` and its dedicated database remains `vibe-coder-league` (`a5fcb38c-026a-4bd3-9f93-a2822cf067b4`). GitHub App configuration is stored only as Worker secrets; cron remains disabled until a separate, evidenced end-to-end authorization and opt-in journey.
+
+## Canonical origin migration — deployment gated
+
+The domain is officially attached to the existing Worker, with no overrides or changeset conflicts; TLS/root HTTP 200 was verified against the existing old-brand deployment. Do not deploy this `PUBLIC_ORIGIN` switch until a human App administrator confirms the exact GitHub callback below. Domain attachment does not establish OAuth readiness. CTO owns the supporting migration evidence.
+
+In the existing GitHub App's **General** settings (personal owner: `https://github.com/settings/apps/<app-slug>`; organization owner: `https://github.com/organizations/<owner>/settings/apps/<app-slug>`), a human App administrator must set:
+
+- Homepage URL: `https://viberivals.com`
+- Callback URL: `https://viberivals.com/api/auth/github/callback`
+
+The App owner/slug cannot be inferred from the client ID here; confirm the existing App rather than creating another App. No setup URL endpoint is implemented, so do not configure a setup URL as a substitute for the OAuth callback. Keep permissions, installations, repository IDs, consents, PR IDs, scores, and the session encryption key unchanged. Keep the existing operational repository reference until its rename is confirmed.
+
+All requests, including static assets, reach the Worker first. Off-origin root/assets GET/HEAD requests redirect to the canonical path without a query; off-origin APIs and mutations are rejected. An off-origin callback discards code/state and restarts login at the fixed canonical authorization endpoint. Sessions are host-bound, so users sign in again on the new host; the old origin is not accepted for CSRF. Local development retains the localhost override in `.dev.vars.example`.
+
+Repository sync resolves immutable GitHub node IDs with the selected installation's token, not stored owner/name. Verified current names refresh the participant's consent and PR display metadata under the sync lease; rename does not create a new consent or retract contributions. Transport/GraphQL/shape errors remain retryable failures, not evidence that a repository is private/inaccessible.
 
 ## Ranking eligibility and manual validation
 
