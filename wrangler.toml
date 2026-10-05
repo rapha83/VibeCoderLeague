@@ -5,11 +5,13 @@ workers_dev = true
 
 [vars]
 # Exact production origin; do not include a trailing slash.
-PUBLIC_ORIGIN = "https://vibecoderleague.grumpzillax.workers.dev"
+PUBLIC_ORIGIN = "https://viberivals.com"
 
 [assets]
 directory = "./src/frontend"
 binding = "ASSETS"
+# Supported by the installed Wrangler schema; canonical host guard must cover assets.
+run_worker_first = true
 
 [[d1_databases]]
 binding = "DB"

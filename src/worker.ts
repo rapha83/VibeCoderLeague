@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
-import { eligibleRepo, GitHubClient, GitHubViewerError, installationToken, type Repo } from "./github";
+import { eligibleRepo, GitHubClient, GitHubRequestError, GitHubViewerError, installationToken, resolveGitHubAppIssuer, type Repo } from "./github";
 
-export type Env = { ASSETS: Fetcher; DB: D1Database; PUBLIC_ORIGIN: string; GITHUB_APP_ID: string; GITHUB_APP_PRIVATE_KEY: string; GITHUB_APP_CLIENT_ID: string; GITHUB_APP_CLIENT_SECRET: string; SESSION_ENCRYPTION_KEY_BASE64: string };
+export type Env = { ASSETS: Fetcher; DB: D1Database; PUBLIC_ORIGIN: string; GITHUB_APP_ID?: string; GITHUB_APP_PRIVATE_KEY: string; GITHUB_APP_CLIENT_ID: string; GITHUB_APP_CLIENT_SECRET: string; SESSION_ENCRYPTION_KEY_BASE64: string };
 type Session = { github_id: string; github_login: string; avatar_url: string | null; csrf_token: string; access_token_ciphertext: string | null };
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 export const SCHEDULED_SYNC_WORK_BUDGET = 20;
@@ -48,8 +48,23 @@ async function consumeMutationRateLimit(c: any, scope: string): Promise<boolean>
 type SyncConsentRecord = { github_id: string; repo_id: string; repo_name: string; installation_id: string; declared_tooling: string | null; declared_model: string | null };
 export type AppOptions = { mintToken?: typeof installationToken; sync?: typeof syncConsent };
 
+// No OAuth parameters, cookies or mutation bodies cross the origin boundary.
+function canonicalResponse(request: Request, env: Env): Response | null {
+  const url = new URL(request.url);
+  let canonical: URL;
+  try { canonical = new URL(env.PUBLIC_ORIGIN); if (canonical.origin !== env.PUBLIC_ORIGIN) throw new Error(); }
+  catch { return Response.json({ error: "origin_configuration_invalid" }, { status: 503 }); }
+  if (url.origin === canonical.origin) return null;
+  const headers = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" };
+  const safe = request.method === "GET" || request.method === "HEAD";
+  if (safe && url.pathname === "/api/auth/github/callback") return new Response(null, { status: 303, headers: { ...headers, Location: `${canonical.origin}/api/auth/github` } });
+  if (safe && !url.pathname.startsWith("/api/") && url.pathname !== "/api") return new Response(null, { status: 308, headers: { ...headers, Location: `${canonical.origin}${url.pathname}` } });
+  return Response.json({ error: "canonical_origin_required" }, { status: 421, headers });
+}
+
 export function createApp(options: AppOptions = {}) {
   const app = new Hono<{ Bindings: Env }>();
+  app.use("*", async (c, next) => { const rejected = canonicalResponse(c.req.raw, c.env); if (rejected) return rejected; await next(); });
   app.get("/api/auth/github", async c => {
     try { await key(c.env); } catch { return c.json({ error: "oauth_configuration_invalid", category: "session_encryption" }, 503, { "Cache-Control": "no-store" }); }
     const state = random(), transaction = random(), expiry = new Date(Date.now() + OAUTH_TRANSACTION_MAX_AGE * 1_000).toISOString();
@@ -84,8 +99,12 @@ export function createApp(options: AppOptions = {}) {
   app.get("/api/rules", c => c.json({ rules: ["Participation is opt-in.", "One merged pull request counts once for its opted-in author in its merged-at UTC month.", "Only currently public, accessible repositories are published.", "Tooling and model declarations are unverified."] }, 200, { "Cache-Control": "public, max-age=300" }));
   app.get("/api/leaderboard", async c => {
     const month = requestedUtcMonth(c.req.query("month")); if (!validMonth(month)) return c.json({ error: "invalid_month" }, 400);
-    const rows = await c.env.DB.prepare(`SELECT p.public_profile_id profileId, p.display_name displayName, GROUP_CONCAT(DISTINCT pr.repo_name) repository, COUNT(*) score FROM pull_requests pr JOIN participants p ON p.github_id=pr.author_id AND p.consent_active=1 JOIN consents co ON co.github_id=pr.author_id AND co.repo_id=pr.repo_id AND co.active=1 AND co.visibility='public' WHERE pr.month_utc=? AND p.public_profile_id IS NOT NULL GROUP BY pr.author_id ORDER BY score DESC, displayName ASC LIMIT 100`).bind(month).all();
-    return c.json({ month, rows: rows.results.map((r: any, i) => ({ rank: i + 1, ...r })) }, 200, { "Cache-Control": "public, max-age=60" });
+    // Current public declarations are aggregated separately so they cannot multiply PR scores.
+    const rows = await c.env.DB.prepare(`SELECT p.public_profile_id profileId, p.display_name displayName, GROUP_CONCAT(DISTINCT pr.repo_name) repository, COUNT(*) score, (SELECT json_group_array(json_object('tooling',tooling,'model',model)) FROM (SELECT DISTINCT declared_tooling tooling,declared_model model FROM consents WHERE github_id=pr.author_id AND active=1 AND visibility='public' AND (declared_tooling IS NOT NULL OR declared_model IS NOT NULL) ORDER BY declared_tooling,declared_model)) declarationsJson FROM pull_requests pr JOIN participants p ON p.github_id=pr.author_id AND p.consent_active=1 JOIN consents co ON co.github_id=pr.author_id AND co.repo_id=pr.repo_id AND co.active=1 AND co.visibility='public' WHERE pr.month_utc=? AND p.public_profile_id IS NOT NULL GROUP BY pr.author_id ORDER BY score DESC, displayName ASC LIMIT 100`).bind(month).all<{ profileId: string; displayName: string; repository: string; score: number; declarationsJson: string | null }>();
+    return c.json({ month, rows: rows.results.map(({ declarationsJson, ...row }, i) => {
+      const declarations = JSON.parse(declarationsJson ?? "[]") as { tooling: string | null; model: string | null }[];
+      return { rank: i + 1, ...row, declarations: { status: "self_declared_unverified", tooling: [...new Set(declarations.flatMap(value => value.tooling ? [value.tooling] : []))], models: [...new Set(declarations.flatMap(value => value.model ? [value.model] : []))] } };
+    }) }, 200, { "Cache-Control": "public, max-age=60" });
   });
   app.get("/api/profiles/:id", async c => {
     const month = requestedUtcMonth(c.req.query("month")); if (!validMonth(month)) return c.json({ error: "invalid_month" }, 400, { "Cache-Control": "no-store" });
@@ -116,25 +135,46 @@ export function createApp(options: AppOptions = {}) {
   app.post("/api/sync", async c => {
     try { if (!await consumeMutationRateLimit(c, "manual_sync")) return c.json({ error: "rate_limited" }, 429, { "Retry-After": String(MUTATION_RATE_WINDOW_MS / 1000) }); } catch { return c.json({ error: "rate_limit_unavailable" }, 503); }
     const s = await csrf(c); if (s instanceof Response) return s; if (!s.access_token_ciphertext) return unauthorized(c);
+    let stage: "consent_selection" | "session_decryption" | "repo_access" | "repo_visibility" | "consent_recheck" | "installation_token" | "sync" | "result_read" = "consent_selection";
+    const correlationId = crypto.randomUUID();
+    try {
     const selected = await c.env.DB.prepare("SELECT c.github_id,c.repo_id,c.repo_name,c.installation_id,c.declared_tooling,c.declared_model FROM consents c JOIN participants p ON p.github_id=c.github_id WHERE c.github_id=? AND c.active=1 AND c.visibility='public' AND p.consent_active=1 LIMIT 2").bind(s.github_id).all<SyncConsentRecord>();
     if (selected.results.length !== 1) return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409);
+    stage = "session_decryption";
     const client = new GitHubClient(await open(c.env, s.access_token_ciphertext));
-    let candidate: (Repo & { installationId: string }) | null;
-    try { candidate = eligibleRepo(await client.accessibleRepos(), selected.results[0].repo_id); } catch { return c.json({ error: "sync_unavailable", category: "upstream_or_persistence" }, 503); }
+    stage = "repo_access";
+    const candidate = eligibleRepo(await client.accessibleRepos(), selected.results[0].repo_id);
     if (!candidate) return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409);
-    try { await client.publicRepo(candidate); } catch { return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409); }
+    stage = "repo_visibility";
+    try { await client.publicRepo(candidate); } catch (error) {
+      if (error instanceof Error && error.message === "repo_not_public") return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409);
+      throw error;
+    }
+    stage = "consent_recheck";
     const currentSelections = await c.env.DB.prepare("SELECT c.github_id,c.repo_id,c.repo_name,c.installation_id,c.declared_tooling,c.declared_model FROM consents c JOIN participants p ON p.github_id=c.github_id WHERE c.github_id=? AND c.active=1 AND c.visibility='public' AND p.consent_active=1 LIMIT 2").bind(s.github_id).all<SyncConsentRecord>();
     const current = currentSelections.results.length === 1 && currentSelections.results[0].repo_id === candidate.id ? currentSelections.results[0] : null;
     if (!current) return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409);
-    try {
-      const token = await (options.mintToken ?? installationToken)(c.env.GITHUB_APP_ID, c.env.GITHUB_APP_PRIVATE_KEY, candidate.installationId);
+      stage = "installation_token";
+      const token = await (options.mintToken ?? installationToken)(resolveGitHubAppIssuer(c.env), c.env.GITHUB_APP_PRIVATE_KEY, candidate.installationId);
+      stage = "sync";
       const outcome = await (options.sync ?? syncConsent)(c.env, current, token, MANUAL_SYNC_PAGES_PER_CONSENT);
       if (outcome.status === "busy") return c.json({ status: "busy" }, 409);
       if (outcome.status === "partial") return c.json({ status: "partial" });
       if (outcome.status !== "complete") return c.json({ error: "sync_not_available", category: "consent_or_access" }, 409);
+      stage = "result_read";
       const contributions = await c.env.DB.prepare("SELECT COUNT(*) count FROM pull_requests WHERE repo_id=? AND author_id=?").bind(current.repo_id, s.github_id).first<{ count: number }>();
-      return c.json({ status: contributions?.count ? "complete" : "no_eligible_prs" });
-    } catch { return c.json({ error: "sync_unavailable", category: "upstream_or_persistence" }, 503); }
+      if (!contributions || !Number.isInteger(contributions.count) || contributions.count < 0) throw new Error("sync_result_invalid");
+      return c.json({ status: contributions.count ? "complete" : "no_eligible_prs" });
+    } catch (error) {
+      const diagnostic = {
+        stage: stage === "sync" ? (error instanceof GitHubRequestError ? "pull_fetch" : "sync_persistence") : stage,
+        category: error instanceof GitHubRequestError ? error.category : error instanceof Error && error.message === "sync_lease_lost" ? "lease_lost" : stage === "session_decryption" ? "configuration_error" : ["consent_selection", "consent_recheck", "sync", "result_read"].includes(stage) ? "persistence_error" : "unknown_error",
+        status: error instanceof GitHubRequestError ? error.status : 0,
+        correlationId
+      };
+      console.warn("sync_unavailable", diagnostic);
+      return c.json({ error: "sync_unavailable", category: "upstream_or_persistence", diagnostic }, 503, { "Cache-Control": "no-store" });
+    }
   });
   return app;
 }
@@ -152,7 +192,7 @@ export async function syncConsent(env: Env, consent: { github_id: string; repo_i
   if (!active) { await releasePartialLease(); return { status: "partial" }; }
   const retract = async (): Promise<SyncOutcome> => { const timestamp = now(); const retracted = await env.DB.batch([env.DB.prepare("UPDATE sync_jobs SET status='retracted',cursor=NULL,lease_token=NULL,lease_until=NULL WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?").bind(consent.github_id,consent.repo_id,leaseToken,timestamp), env.DB.prepare("UPDATE consents SET visibility='private',active=0,updated_at=? WHERE github_id=? AND repo_id=? AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND status='retracted' AND lease_token IS NULL)").bind(timestamp,consent.github_id,consent.repo_id,consent.github_id,consent.repo_id), env.DB.prepare("DELETE FROM pull_requests WHERE repo_id=? AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND status='retracted' AND lease_token IS NULL)").bind(consent.repo_id,consent.github_id,consent.repo_id)]); if (!retracted[0].meta.changes) throw new Error("sync_lease_lost"); return { status: "retracted" }; };
   for (let page = 0; page < maxPages; page++) { if (budget && !budget.tryConsume()) { await releasePartialLease(); return { status: "partial" }; } let result; await renewLease(); try { result = await client.pulls(repo, cursor); } catch (error) { if (error instanceof Error && error.message === "repo_inaccessible") return retract(); await releasePartialLease(); throw error; } await renewLease(); if (result.visibility !== "PUBLIC") return retract();
-    cursor = result.cursor; const timestamp = now(), complete = !result.hasNext, terminal = complete || page + 1 === maxPages || budget?.remaining === 0; const statements = [env.DB.prepare("UPDATE consents SET visibility='public',updated_at=? WHERE github_id=? AND repo_id=? AND active=1 AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?)").bind(timestamp,consent.github_id,consent.repo_id,consent.github_id,consent.repo_id,leaseToken,timestamp)]; const pulls = result.pulls.filter(p => p.author?.id === consent.github_id).map(p => env.DB.prepare(`INSERT INTO pull_requests(pr_id,repo_id,repo_name,author_id,author_login,author_avatar_url,merged_at,month_utc,generation,declared_tooling,declared_model) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM participants p JOIN consents c ON c.github_id=p.github_id WHERE p.github_id=? AND p.consent_active=1 AND c.repo_id=? AND c.active=1 AND c.visibility='public') AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?) ON CONFLICT(pr_id) DO UPDATE SET generation=MAX(pull_requests.generation,excluded.generation)`).bind(p.id,consent.repo_id,consent.repo_name,p.author!.id,p.author!.login,p.author!.avatarUrl ?? null,p.mergedAt,utcMonth(p.mergedAt),generation,consent.declared_tooling,consent.declared_model,consent.github_id,consent.repo_id,consent.github_id,consent.repo_id,leaseToken,timestamp)); statements.push(...pulls);
+    cursor = result.cursor; const timestamp = now(), complete = !result.hasNext, terminal = complete || page + 1 === maxPages || budget?.remaining === 0; const statements = [env.DB.prepare("UPDATE consents SET repo_name=?,visibility='public',updated_at=? WHERE github_id=? AND repo_id=? AND active=1 AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?)").bind(result.nameWithOwner,timestamp,consent.github_id,consent.repo_id,consent.github_id,consent.repo_id,leaseToken,timestamp), env.DB.prepare("UPDATE pull_requests SET repo_name=? WHERE repo_id=? AND author_id=? AND EXISTS (SELECT 1 FROM consents WHERE github_id=? AND repo_id=? AND active=1 AND visibility='public') AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?)").bind(result.nameWithOwner,consent.repo_id,consent.github_id,consent.github_id,consent.repo_id,consent.github_id,consent.repo_id,leaseToken,timestamp)]; const pulls = result.pulls.filter(p => p.author?.id === consent.github_id).map(p => env.DB.prepare(`INSERT INTO pull_requests(pr_id,repo_id,repo_name,author_id,author_login,author_avatar_url,merged_at,month_utc,generation,declared_tooling,declared_model) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM participants p JOIN consents c ON c.github_id=p.github_id WHERE p.github_id=? AND p.consent_active=1 AND c.repo_id=? AND c.active=1 AND c.visibility='public') AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?) ON CONFLICT(pr_id) DO UPDATE SET generation=MAX(pull_requests.generation,excluded.generation)`).bind(p.id,consent.repo_id,result.nameWithOwner,p.author!.id,p.author!.login,p.author!.avatarUrl ?? null,p.mergedAt,utcMonth(p.mergedAt),generation,consent.declared_tooling,consent.declared_model,consent.github_id,consent.repo_id,consent.github_id,consent.repo_id,leaseToken,timestamp)); statements.push(...pulls);
     if (complete) statements.push(env.DB.prepare("DELETE FROM pull_requests WHERE repo_id=? AND author_id=? AND generation<? AND EXISTS (SELECT 1 FROM sync_jobs WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?)").bind(consent.repo_id,consent.github_id,generation,consent.github_id,consent.repo_id,leaseToken,timestamp));
     statements.push(env.DB.prepare("UPDATE sync_jobs SET cursor=?,status=?,pages_processed=pages_processed+1,last_success_at=CASE WHEN ? THEN ? ELSE last_success_at END,lease_token=CASE WHEN ? THEN NULL ELSE lease_token END,lease_until=CASE WHEN ? THEN NULL ELSE lease_until END WHERE github_id=? AND repo_id=? AND lease_token=? AND lease_until>?").bind(complete ? null : cursor, complete ? "complete" : "partial", complete ? 1 : 0, timestamp, terminal ? 1 : 0, terminal ? 1 : 0, consent.github_id, consent.repo_id, leaseToken, timestamp));
     const progress = (await env.DB.batch(statements)).at(-1)!;
@@ -171,7 +211,7 @@ export async function runScheduledSync(env: Env, options: ScheduledSyncOptions =
     if (budget.remaining < 2) break;
     try {
       if (!budget.tryConsume()) break;
-      const token = await mintToken(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, consent.installation_id);
+      const token = await mintToken(resolveGitHubAppIssuer(env), env.GITHUB_APP_PRIVATE_KEY, consent.installation_id);
       await sync(env, consent, token, SYNC_PAGES_PER_CONSENT, budget);
     } catch (error) {
       if (error instanceof Error && error.message === "sync_lease_lost") continue;
@@ -180,5 +220,5 @@ export async function runScheduledSync(env: Env, options: ScheduledSyncOptions =
   }
 }
 const api = createApp();
-const worker = { fetch: (request: Request, env: Env, ctx: ExecutionContext) => new URL(request.url).pathname.startsWith("/api/") ? api.fetch(request, env, ctx) : env.ASSETS.fetch(request), scheduled: async (_: ScheduledController, env: Env, ctx: ExecutionContext) => { ctx.waitUntil(runScheduledSync(env)); } };
+const worker = { fetch: (request: Request, env: Env, ctx: ExecutionContext) => canonicalResponse(request, env) ?? (new URL(request.url).pathname.startsWith("/api/") ? api.fetch(request, env, ctx) : env.ASSETS.fetch(request)), scheduled: async (_: ScheduledController, env: Env, ctx: ExecutionContext) => { ctx.waitUntil(runScheduledSync(env)); } };
 export default worker;

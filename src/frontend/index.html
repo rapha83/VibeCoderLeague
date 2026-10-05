@@ -3,8 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="A public, monthly, opt-in repository leaderboard." />
-    <title>Vibe Coder League</title>
+    <meta name="description" content="VibeRivals — The vibe coding competition. Build with AI. Merge. Climb. Monthly UTC rankings award 1 point per eligible merged PR, not code quality or productivity." />
+    <title>VibeRivals — The vibe coding competition</title>
+    <link rel="canonical" href="https://viberivals.com/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="VibeRivals" />
+    <meta property="og:title" content="VibeRivals — The vibe coding competition" />
+    <meta property="og:description" content="Build with AI. Merge. Climb. Explore monthly UTC merged-PR rankings and self-declared AI tools and models. 1 eligible merged PR = 1 point; not a quality or productivity measure." />
+    <meta property="og:url" content="https://viberivals.com/" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="VibeRivals — The vibe coding competition" />
+    <meta name="twitter:description" content="Build with AI. Merge. Climb. Explore monthly UTC merged-PR rankings and self-declared AI tools and models. 1 eligible merged PR = 1 point; not a quality or productivity measure." />
     <link rel="stylesheet" href="/styles.css" />
     <script src="/app.js" defer></script>
   </head>
@@ -12,8 +21,8 @@
     <a class="skip-link" href="#main-content">Skip to content</a>
     <header class="site-header">
       <div class="shell header-content">
-        <a class="wordmark" href="/" aria-label="Vibe Coder League home">Vibe <span>Coder</span> League</a>
-        <a class="header-link" href="#participate">Participation</a>
+        <a class="wordmark" href="/" aria-label="VibeRivals home">Vibe<span>Rivals</span></a>
+        <nav aria-label="Main navigation"><a class="header-link" href="#leaderboard">Rankings</a><a class="header-link" href="#participate">Join VibeRivals</a></nav>
       </div>
     </header>
 
@@ -21,39 +30,47 @@
       <section class="hero" aria-labelledby="page-title">
         <div class="shell hero-grid">
           <div>
-            <p class="eyebrow">Monthly public board</p>
-            <h1 id="page-title">Make participation an explicit choice.</h1>
-            <p class="hero-copy">Select one eligible public repository, confirm your consent, and appear only after you opt in. You can withdraw consent at any time.</p>
-            <a class="button button-primary" href="#participate">Review participation</a>
+            <p class="eyebrow">The vibe coding competition</p>
+            <h1 id="page-title">Build with AI.<br /><span>Merge. Climb.</span></h1>
+            <p class="hero-copy">A public competition for vibe coders building with AI. Compare merged pull requests each UTC month and explore the tools and models participants choose to share.</p>
+            <a class="button button-primary" href="#participate">Join VibeRivals <span aria-hidden="true">↗</span></a>
+            <a class="hero-ranking-link" href="#leaderboard">Explore rankings ↓</a>
           </div>
-          <aside class="hero-note" aria-label="Participation principle">
-            <p class="eyebrow">The principle</p>
-            <p>Public repos are not enrolled automatically. The leaderboard only shows opted-in participants.</p>
+          <aside class="hero-note" aria-label="VibeRivals scoring and participation">
+            <p class="eyebrow">The scoring protocol</p>
+            <p class="protocol-score">1 merged PR <span>= 1 point</span></p>
+            <p>Counted in its merged-at UTC month. Only opted-in contributions from currently public, accessible repositories are published. Points count eligible merged PRs, not code quality or developer productivity.</p>
+            <p class="quiet">Your repo. Your choice. Withdraw consent at any time.</p>
           </aside>
         </div>
       </section>
 
-      <section class="section" aria-labelledby="leaderboard-title">
+      <section id="leaderboard" class="section arena" aria-labelledby="leaderboard-title">
         <div class="shell">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">The board</p>
-              <h2 id="leaderboard-title">Leaderboard</h2>
+              <p class="eyebrow">VibeRivals / Monthly rankings</p>
+              <h2 id="leaderboard-title">VibeRivals rankings</h2>
             </div>
             <label class="month-control" for="month-picker">
-              <span>Month</span>
+              <span>Season / UTC month</span>
               <input id="month-picker" type="month" />
             </label>
           </div>
           <p id="leaderboard-status" class="status-text" role="status" aria-live="polite">Loading leaderboard…</p>
-          <div class="table-wrap" tabindex="0">
+          <p id="declarations-help" class="field-help">Tool and model: self-declared current AI coding configuration, unverified by PR. These details are not attributed to the selected month or individual contributions and do not affect points.</p>
+          <div id="ranking-surfaces" aria-busy="true" aria-describedby="declarations-help">
+          <ol id="podium" class="podium" aria-label="Top three participants" hidden></ol>
+          <div class="ranking-heading"><h3>Complete ranking</h3><p>1 eligible merged PR = 1 point</p></div>
+          <div class="table-wrap" tabindex="0" role="region" aria-label="Complete monthly ranking">
             <table>
               <caption class="sr-only">Monthly opted-in participants and their published score</caption>
               <thead>
-                <tr><th scope="col">Rank</th><th scope="col">Participant</th><th scope="col">Repository</th><th scope="col">Score</th></tr>
+                <tr><th scope="col">Rank</th><th scope="col">Participant</th><th scope="col">Repository</th><th scope="col">Tool</th><th scope="col">Model</th><th scope="col">Merged PRs</th></tr>
               </thead>
               <tbody id="leaderboard-body"></tbody>
             </table>
+          </div>
           </div>
           <button id="leaderboard-retry" class="button button-secondary retry" type="button" hidden>Try again</button>
         </div>
@@ -61,7 +78,9 @@
 
       <section id="profile" class="section section-tint" aria-labelledby="profile-title" hidden>
         <div class="shell profile-panel">
-          <p class="eyebrow">Public participant profile</p>
+          <a class="header-link" href="#leaderboard">← Back to rankings</a>
+          <p class="eyebrow">VibeRivals / Public participant profile</p>
+          <h2 id="profile-title" tabindex="-1">Participant profile</h2>
           <div id="profile-content"></div>
           <p id="profile-status" class="status-text" role="status" aria-live="polite">Loading public profile…</p>
           <button id="profile-retry" class="button button-secondary retry" type="button" hidden>Try again</button>
@@ -87,9 +106,14 @@
         <div class="shell two-column">
           <div>
             <p class="eyebrow">Your choice</p>
-            <h2 id="participation-title">Participate with a public repository</h2>
+            <h2 id="participation-title">Your place in VibeRivals.</h2>
+            <ol class="journey-steps" aria-label="Participation steps">
+              <li><strong>Connect GitHub</strong><span>Review your eligible public repositories.</span></li>
+              <li><strong>Choose &amp; consent</strong><span>Nothing is enrolled automatically.</span></li>
+              <li><strong>Sync contributions</strong><span>Publish eligible merged PRs. Withdraw any time.</span></li>
+            </ol>
             <p>GitHub connection lets this site show the eligible public repositories associated with your session. Nothing is selected until you choose it and confirm consent.</p>
-            <p class="quiet">Tooling and model details are optional self-descriptions. They are not verified.</p>
+            <p class="quiet">AI coding tools and models are optional self-descriptions. They are not verified and do not affect points.</p>
           </div>
           <div class="participation-panel">
             <p id="session-status" class="status-text" role="status" aria-live="polite">Checking session…</p>
@@ -98,13 +122,17 @@
               <fieldset>
                 <legend>Select an eligible public repository</legend>
                 <label for="repo-select">Repository</label>
-                <select id="repo-select" name="repoId" required disabled>
+                <select id="repo-select" name="repoId" aria-describedby="repo-help" required disabled>
                   <option value="">Choose a repository</option>
                 </select>
                 <p id="repo-help" class="field-help">Only repositories returned as eligible by the service are available here.</p>
 
                 <label for="declared-tooling">Tooling <span class="unverified">self-declared — unverified</span></label>
-                <input id="declared-tooling" name="declaredTooling" type="text" maxlength="80" autocomplete="off" />
+                <div class="tool-combobox">
+                  <input id="declared-tooling" name="declaredTooling" type="text" maxlength="80" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="tool-options" aria-describedby="tool-help" />
+                  <ul id="tool-options" role="listbox" aria-label="Tooling suggestions" hidden></ul>
+                </div>
+                <p id="tool-help" class="field-help">Optional. Type a tool or use ↓ / ↑ and Enter to choose a suggestion. Other/custom accepts your own name; Not informed leaves tooling empty. No model is assigned.</p>
 
                 <label for="declared-model">Model <span class="unverified">self-declared — unverified</span></label>
                 <input id="declared-model" name="declaredModel" type="text" maxlength="80" autocomplete="off" />
@@ -118,10 +146,13 @@
               <button id="participation-submit" class="button button-primary" type="submit">Confirm participation</button>
             </form>
             <div id="withdrawal-panel" hidden>
-              <p>You are currently participating. Withdrawing consent removes you from public participation.</p>
-              <button id="sync-now" class="button button-secondary" type="button">Sync now</button>
+              <p class="eyebrow">Participation active</p>
+              <h3>Your contribution control room</h3>
+              <p>Sync your selected public repository to update eligible contributions. Rankings use the selected UTC month; sync imports repository contributions.</p>
+              <button id="sync-now" class="button button-primary" type="button">Sync now</button>
               <p id="sync-message" class="form-message" role="status" aria-live="polite"></p>
-              <button id="withdraw-consent" class="button button-danger" type="button">Withdraw consent</button>
+              <div class="withdrawal-zone"><p>Leaving VibeRivals? Withdrawing consent removes you from public participation.</p>
+              <button id="withdraw-consent" class="button button-danger" type="button">Withdraw consent</button></div>
               <p id="withdrawal-message" class="form-message" role="status" aria-live="polite"></p>
             </div>
           </div>
@@ -129,6 +160,6 @@
       </section>
     </main>
 
-    <footer class="site-footer"><div class="shell">Vibe Coder League · Public participation is opt-in.</div></footer>
+    <footer class="site-footer"><div class="shell">VibeRivals · The vibe coding competition · Public participation is opt-in.</div></footer>
   </body>
 </html>
