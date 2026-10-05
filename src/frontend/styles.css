@@ -31,8 +31,8 @@ p { overflow-wrap:anywhere; } h1,h2,h3 { text-wrap:balance; }
 .hero-ranking-link { display:inline-flex; align-items:center; gap:.5rem; min-height:2.8rem; padding:.75rem 0; font-size:.9rem; }
 .hero-note,.participation-panel,.rules-panel,.profile-panel { border-radius:.75rem; min-width:0; padding:clamp(1.25rem,3vw,2rem); }
 .hero-visual { min-width:0; }
-/* A single editorial illustration, not a data surface. Keep both rivals in view. */
-.hero-art { display:block; width:100%; max-width:100%; height:auto; aspect-ratio:3 / 2; object-fit:contain; border-radius:.75rem; background:#071125; }
+/* One static illustration; separately authored code lanes carry the motion. */
+.hero-art { display:block; width:100%; max-width:100%; height:auto; aspect-ratio:3 / 2; object-fit:contain; }
 .hero-note { margin-top:1.5rem; border-top:1px solid var(--line); }
 .protocol-score { font:700 clamp(1.4rem,2.8vw,2rem)/1.4 var(--mono); letter-spacing:-.04em; }
 .protocol-score span { display:block; color:var(--orange); }
@@ -94,6 +94,48 @@ input[type="text"],select { border-color:#627491; background:#0d1524; border-rad
 .podium-configuration dd { margin:0; overflow-wrap:anywhere; }
 .configuration-qualifier { color:var(--muted); font-size:.78rem; text-align:left; }
 .tool-combobox { position:relative; min-width:0; }
+/* Open code arena: art is part of the scene, not another rounded data card. */
+.hero { position:relative; isolation:isolate; overflow:hidden; background:#071125; }
+.hero::before { content:""; position:absolute; z-index:-1; inset:0; pointer-events:none; background:url('/arena-flows.svg') center / cover no-repeat; opacity:.14; }
+.hero-grid { grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); align-items:center; gap:clamp(1.5rem,3vw,3rem); }
+.hero-grid > div:first-child { position:relative; z-index:1; }
+.hero h1 { font-size:clamp(2.8rem,6.5vw,5.6rem); }
+.builder-stage { position:relative; isolation:isolate; aspect-ratio:3 / 2; margin-inline:-1rem; }
+.builder-stage .hero-art { position:relative; z-index:1; mask-image:radial-gradient(ellipse at center,#000 48%,transparent 74%); }
+.arena-lane { position:absolute; z-index:0; inset:9% 1%; border:1px solid; border-radius:50%; pointer-events:none; }
+.arena-lane-cyan { border-color:#66e7f480; transform:rotate(-18deg); box-shadow:0 12px 0 -11px #66e7f4; }
+.arena-lane-violet { border-color:#b5a1ff80; transform:rotate(18deg); box-shadow:0 -12px 0 -11px #b5a1ff; }
+.arena-bracket { position:absolute; z-index:2; bottom:4%; font:700 clamp(2rem,5vw,4rem)/1 var(--mono); pointer-events:none; }
+.arena-bracket-left { left:3%; color:var(--green); transform:rotate(-10deg); }
+.arena-bracket-right { right:3%; color:var(--orange); transform:rotate(10deg); }
+.hero-note { position:relative; margin-top:1.5rem; background:#0b1525; border-radius:0; border:0; border-left:2px solid var(--orange); padding:1rem 1.5rem; }
+.hero-note .protocol-score { margin:.5rem 0; font-size:clamp(1.2rem,2vw,1.6rem); }
+.protocol-score span { display:inline; }
+.hero-note > p:not(.eyebrow):not(.protocol-score) { font-size:.85rem; }
+/* The second and final background area fades out before the ranking data. */
+.arena { position:relative; isolation:isolate; }
+.arena::before { content:""; position:absolute; z-index:-1; pointer-events:none; inset:0 0 auto; height:7rem; background:url('/arena-flows.svg') center bottom / cover no-repeat; opacity:.1; mask-image:linear-gradient(#000,transparent); }
+@media (prefers-reduced-motion:no-preference) {
+  .hero-grid > div:first-child { animation:arena-entry 650ms ease-out both; }
+  .arena-lane-cyan { animation:lane-cyan-entry 900ms ease-out both; }
+  .arena-lane-violet { animation:lane-violet-entry 1100ms ease-out both; }
+  .arena-bracket { animation:bracket-entry 800ms 150ms ease-out both; }
+  .button:not(:disabled),.podium-card { transition:transform 180ms ease-out; }
+  .button:not(:disabled):active { transform:translateY(1px); }
+  .button-primary:hover,.button-primary:focus-visible { transform:translateY(-2px); }
+  .podium-card:focus-within { transform:translateY(-3px); }
+}
+@media (hover:hover) and (prefers-reduced-motion:no-preference) { .podium-card:hover { transform:translateY(-3px); } }
+@keyframes bracket-entry { from { opacity:0; } to { opacity:1; } }
+@keyframes arena-entry { from { opacity:.65; transform:translateY(12px); } to { opacity:1; } }
+@keyframes lane-cyan-entry { from { opacity:0; transform:translateX(-20px) rotate(-26deg); } to { opacity:1; transform:rotate(-18deg); } }
+@keyframes lane-violet-entry { from { opacity:0; transform:translateX(20px) rotate(26deg); } to { opacity:1; transform:rotate(18deg); } }
+@media (max-width:760px) {
+  .builder-stage { margin-inline:0; }
+  .hero::before { background-size:auto 100%; opacity:.1; }
+  .hero h1 { font-size:clamp(2.8rem,12vw,4.5rem); }
+}
+@media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; } }
 #tool-options { position:absolute; z-index:2; inset:100% 0 auto; list-style:none; margin:.25rem 0 0; padding:.25rem; border:1px solid var(--line); border-radius:.4rem; background:var(--panel); max-height:18rem; overflow-y:auto; }
 #tool-options [role="option"] { padding:.65rem; min-height:2.8rem; overflow-wrap:anywhere; cursor:pointer; }
 #tool-options [aria-selected="true"],#tool-options [role="option"]:hover { color:var(--ink); background:#243852; outline:1px solid var(--focus); outline-offset:-1px; }

@@ -44,7 +44,7 @@ describe("competition hero illustration", () => {
     window.happyDOM.abort();
   });
 
-  it("statically constrains the art to its column and preserves the full mobile composition without motion", () => {
+  it("statically constrains the stationary art and preserves both builders on mobile", () => {
     const rule = css.match(/\.hero-art\s*\{([^}]+)\}/)[1];
     for (const declaration of ["display:block", "width:100%", "max-width:100%", "height:auto", "aspect-ratio:3 / 2", "object-fit:contain"]) {
       expect(rule).toContain(declaration);
@@ -53,5 +53,43 @@ describe("competition hero illustration", () => {
     expect(css).toContain(".hero-visual { min-width:0; }");
     expect(css).toMatch(/@media \(max-width:760px\)\s*\{\s*\.hero-grid,\.two-column \{ grid-template-columns:1fr;/);
     expect(css).toContain("@media (prefers-reduced-motion:reduce)");
+  });
+
+  it("separates decorative arena layers from essential HTML and adds no runtime script", () => {
+    const window = new Window();
+    window.document.write(html);
+    const document = window.document;
+    const stage = document.querySelector('.builder-stage');
+    expect(stage.getAttribute('aria-hidden')).toBe('true');
+    expect(stage.querySelectorAll('.arena-lane')).toHaveLength(2);
+    expect(stage.querySelectorAll('.arena-bracket')).toHaveLength(2);
+    expect(stage.querySelectorAll('a,button,input')).toHaveLength(0);
+    expect(document.querySelectorAll('script')).toHaveLength(1);
+    stage.remove();
+    expect(document.querySelector('.hero-note').textContent).toContain('1 eligible merged PR');
+    expect(document.querySelector('#month-picker')).not.toBeNull();
+    expect(document.querySelector('#participation-form')).not.toBeNull();
+    window.happyDOM.abort();
+  });
+
+  it("uses a small original passive SVG in only two background areas", () => {
+    const svg = readFileSync(new URL('../src/frontend/arena-flows.svg', import.meta.url), 'utf8');
+    expect(Buffer.byteLength(svg)).toBeLessThan(2500);
+    expect(svg).toContain('viewBox="0 0 1440 760"');
+    expect(svg).not.toMatch(/<script|<image|<foreignObject|<animate|href=|<text/);
+    expect(css.match(/url\('\/arena-flows.svg'\)/g)).toHaveLength(2);
+    expect(css).toContain('height:7rem');
+    expect(css).toContain('mask-image:linear-gradient(#000,transparent)');
+  });
+
+  it("limits motion to finite entrances and interactions with a fully static reduced-motion mode", () => {
+    expect(css).toContain('@media (prefers-reduced-motion:no-preference)');
+    expect(css).toContain('animation:lane-cyan-entry 900ms ease-out both');
+    expect(css).toContain('animation:lane-violet-entry 1100ms ease-out both');
+    expect(css).toContain('animation:none!important; transition:none!important;');
+    expect(css).not.toMatch(/infinite|animation:.*hero-art/);
+    const keyframes = css.slice(css.indexOf('@keyframes arena-entry'), css.indexOf('@media (max-width:760px)', css.indexOf('@keyframes arena-entry')));
+    expect(keyframes).not.toMatch(/\b(width|height|top|left|margin|padding):/);
+    expect(css).toContain('.builder-stage { margin-inline:0; }');
   });
 });
