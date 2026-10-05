@@ -288,6 +288,60 @@ describe("manual post-consent sync integration", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("publishes 1 then 3 October PRs after a stable-ID rename, resumes pagination and replays without inflation", async () => {
+    const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
+    await selected(DB);
+    await DB.prepare("UPDATE participants SET public_profile_id='profile-u1' WHERE github_id='u1'").run();
+    const consent = { github_id: "u1", repo_id: "r1", repo_name: "octo/public", installation_id: "i1", declared_tooling: null, declared_model: null };
+    const pull = (id: string, mergedAt: string, authorId = "u1", login = "octo") => ({ id, mergedAt, author: { id: authorId, login } });
+    const first = pull("pr2", "2026-10-05T01:28:58Z");
+    const second = pull("pr3", "2026-10-05T02:29:08Z");
+    const third = pull("pr4", "2026-10-05T13:04:06Z");
+    let renamed = false;
+    const cursors: Array<string | null> = [];
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.variables.id).toBe("r1");
+      expect(body.query).toContain("repository:node(id:$id)");
+      expect(body.query).toContain("first:50,after:$after,states:MERGED");
+      expect(String(init?.body)).not.toContain("octo/public");
+      const after = body.variables.after as string | null; cursors.push(after);
+      expect(after === null || after === "page-2").toBe(true);
+      const hasNextPage = renamed && after === null;
+      // Same login but wrong stable author ID must not count; changed login with the correct ID must.
+      const nodes = !renamed ? [first] : hasNextPage
+        ? [third, { ...second, author: { id: "u1", login: "octo-renamed" } }, pull("other-user", third.mergedAt, "u2"), { ...third, id: "deleted-author", author: null }]
+        : [first];
+      return Response.json({ data: { repository: { __typename: "Repository", id: "r1", nameWithOwner: renamed ? "octo/VibeRivals" : "octo/public", visibility: "PUBLIC", pullRequests: { nodes, pageInfo: { endCursor: hasNextPage ? "page-2" : null, hasNextPage } } } } });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const assertPublished = async (score: number, repository: string) => {
+      expect(await (await request("/api/leaderboard?month=2026-10", bindings)).json()).toMatchObject({ month: "2026-10", rows: [{ profileId: "profile-u1", repository, score }] });
+      expect(await (await request("/api/profiles/profile-u1?month=2026-10", bindings)).json()).toMatchObject({ month: "2026-10", repositories: [{ repository, pullRequests: score }] });
+      expect(await DB.prepare("SELECT COUNT(*) count FROM pull_requests").first()).toEqual({ count: score });
+    };
+    expect(await syncConsent(bindings, consent, "installation-token")).toEqual({ status: "complete" });
+    await assertPublished(1, "octo/public");
+    renamed = true;
+    expect(await syncConsent(bindings, consent, "installation-token", 1)).toEqual({ status: "partial" });
+    expect(await DB.prepare("SELECT cursor,generation,status,lease_token FROM sync_jobs").first()).toEqual({ cursor: "page-2", generation: 2, status: "partial", lease_token: null });
+    await assertPublished(3, "octo/VibeRivals");
+    expect(await syncConsent(bindings, consent, "installation-token", 1)).toEqual({ status: "complete" });
+    await assertPublished(3, "octo/VibeRivals");
+    expect(await syncConsent(bindings, consent, "installation-token")).toEqual({ status: "complete" });
+    await assertPublished(3, "octo/VibeRivals");
+    expect(cursors).toEqual([null, null, "page-2", null, "page-2"]);
+    expect(await DB.prepare("SELECT cursor,generation,status,lease_token FROM sync_jobs").first()).toEqual({ cursor: null, generation: 3, status: "complete", lease_token: null });
+    expect(await DB.prepare("SELECT repo_id,repo_name,active,visibility FROM consents").first()).toEqual({ repo_id: "r1", repo_name: "octo/VibeRivals", active: 1, visibility: "public" });
+    expect((await DB.prepare("SELECT pr_id,repo_id,repo_name,month_utc,generation FROM pull_requests ORDER BY pr_id").all()).results).toEqual(["pr2", "pr3", "pr4"].map(pr_id => ({ pr_id, repo_id: "r1", repo_name: "octo/VibeRivals", month_utc: "2026-10", generation: 3 })));
+    // Public UI counts are monthly, not the aggregate used internally to choose sync status.
+    expect(await (await request("/api/leaderboard?month=2026-09", bindings)).json()).toEqual({ month: "2026-09", rows: [] });
+    expect(await (await request("/api/profiles/profile-u1?month=2026-09", bindings)).json()).toMatchObject({ month: "2026-09", repositories: [] });
+    await DB.prepare("UPDATE consents SET visibility='private' WHERE github_id='u1'").run();
+    expect(await (await request("/api/leaderboard?month=2026-10", bindings)).json()).toEqual({ month: "2026-10", rows: [] });
+    expect((await request("/api/profiles/profile-u1?month=2026-10", bindings)).status).toBe(404);
+  });
+
   it("rejects unauthenticated and CSRF-invalid requests before any GitHub or sync work", async () => {
     const { mf, DB, bindings } = await fixture(); fixtures.push(mf);
     const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
