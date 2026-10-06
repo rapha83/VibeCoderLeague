@@ -4,6 +4,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](tsconfig.json)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers%20%26%20D1-orange.svg)](wrangler.toml)
 [![Production](https://img.shields.io/badge/Production-viberivals.com-success.svg)](https://viberivals.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **The vibe coding competition** — Compete with builders using AI.
 
@@ -161,3 +162,9 @@ For in-depth technical details, check the [Documentation Index](docs/README.md):
 - Automatic AI detection or code quality evaluation.
 - Commercial rankings, prizes, or sponsored placements.
 - Broad third-party write permissions to participant repositories.
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE). Feel free to use, study, fork, and contribute.
