@@ -31,14 +31,14 @@ Set the GitHub App **user authorization callback URL** to the exact HTTPS value:
 ${PUBLIC_ORIGIN}/api/auth/github/callback
 ```
 
-`PUBLIC_ORIGIN` must be the exact origin, without a trailing slash or path. The actual legacy origin is `https://vibecoderleague.grumpzillax.workers.dev`; its callback is `https://vibecoderleague.grumpzillax.workers.dev/api/auth/github/callback`.
+`PUBLIC_ORIGIN` must be the exact canonical origin, without a trailing slash or path (`https://viberivals.com`).
 
-The canonical VibeRivals values are:
+The canonical VibeRivals configuration values are:
 
 - Homepage: `https://viberivals.com`
 - User authorization callback: `https://viberivals.com/api/auth/github/callback`
 
-The domain is officially attached to the existing Worker `vibecoderleague`, with no overrides or changeset conflicts. TLS/root HTTP 200 was verified against the existing old-brand deployment. This does **not** confirm the GitHub callback or mean this candidate was deployed. **Do not deploy the `PUBLIC_ORIGIN` cutover until human callback confirmation.** Browser access was denied and no App configuration edit capability is available; use the human settings checklist above. CTO owns the supporting migration evidence.
+Requests to the legacy staging origin (`https://vibecoderleague.grumpzillax.workers.dev`) are redirected automatically to this canonical URL.
 
 After cutover, legacy root/assets safe requests redirect to the canonical path without query parameters. Legacy APIs/mutations are rejected; a callback on the wrong host discards code/state and restarts login on the canonical host. Cookies and authorization transactions are host-bound. Users must sign in again; never forward code/state across hosts or accept both origins for CSRF.
 

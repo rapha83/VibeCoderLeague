@@ -1,5 +1,8 @@
 # OAuth viewer verification receipt — 2026-09-21
 
+> [!NOTE]
+> **Historical Record:** This receipt documents an earlier deployment stage on the legacy `workers.dev` staging route. The canonical production origin was migrated to **https://viberivals.com** on 2026-10-05 (see [viberivals-migration-2026-10-05.md](viberivals-migration-2026-10-05.md)).
+
 ## Scope
 
 One focused diagnosis and diagnostic-only release for the existing Worker `vibecoderleague`. This receipt intentionally contains no OAuth callback URL, authorization code, state, cookie value, token, PEM material, secret value, upstream body, upstream header, exception text, or personal data.
