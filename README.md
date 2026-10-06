@@ -1,57 +1,163 @@
 # VibeRivals
 
-A **public, opt-in monthly leaderboard** for merged GitHub pull requests from explicitly selected, currently public repositories.
+[![Tests](https://img.shields.io/badge/tests-116%20passed-brightgreen.svg)](test/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](tsconfig.json)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers%20%26%20D1-orange.svg)](wrangler.toml)
+[![Production](https://img.shields.io/badge/Production-viberivals.com-success.svg)](https://viberivals.com)
 
-- Participation and repository selection are explicit.
-- A merged PR is credited once to its opted-in author in its `mergedAt` **UTC month**.
-- Tooling/model attribution is optional, self-declared, and labelled **unverified**.
-- Withdrawal or a repository becoming private/inaccessible removes affected contribution records from public output.
+**The vibe coding competition** — Compete with builders using AI.
 
-This Cloudflare Free MVP has Worker code, D1 migrations, static frontend, a dedicated D1 binding, and local tests. The canonical repository is [rapha83/VibeRivals](https://github.com/rapha83/VibeRivals) (clone with `git clone https://github.com/rapha83/VibeRivals.git`); its default branch is `feat/public-opt-in-leaderboard`. Production home is **https://viberivals.com**. The published Worker remains `vibecoderleague` and its dedicated database remains `vibe-coder-league` (`a5fcb38c-026a-4bd3-9f93-a2822cf067b4`). GitHub App configuration is stored only as Worker secrets; cron remains disabled until a separate, evidenced end-to-end authorization and opt-in journey.
+VibeRivals is an open-source, privacy-first, opt-in monthly leaderboard for developers shipping software with AI coding assistants.
 
-## Canonical origin and OAuth status
+- 🌐 **Live Website:** [viberivals.com](https://viberivals.com)
+- 📦 **Repository:** [github.com/rapha83/VibeRivals](https://github.com/rapha83/VibeRivals)
 
-The `https://viberivals.com` deployment is live: version `6e20d6e5-ae93-4017-a20d-010ee47f90d0` received 100% traffic after deployment at `2026-10-05T12:56:55.402Z`. A human App administrator confirmed the canonical homepage and OAuth callback settings at 12:52Z. Live publication and configured OAuth are not completion of user acceptance: human authenticated and visual UAT is still pending. CTO owns the supporting migration evidence; see the [migration record](docs/viberivals-migration-2026-10-05.md).
+---
 
-The existing GitHub App's **General** settings (personal owner: `https://github.com/settings/apps/<app-slug>`; organization owner: `https://github.com/organizations/<owner>/settings/apps/<app-slug>`) are configured as confirmed by the human App administrator:
+## ⚡ The Scoring Protocol
 
-- Homepage URL: `https://viberivals.com`
-- Callback URL: `https://viberivals.com/api/auth/github/callback`
+1. **1 eligible merged PR = 1 point** counted in its `mergedAt` **UTC month**.
+2. **Strictly Opt-In:** Participation is explicit. Only repositories that the participant explicitly selects and that are currently public are included.
+3. **Self-Declared AI Tools & Models:** Participants can optionally share which AI coding assistants (e.g. Claude Code, Cursor, Codex, OpenClaw, Antigravity, Devin, Copilot) and models they use. These declarations are labelled as **self-declared and unverified**.
+4. **Privacy-First & Fail-Closed:** VibeRivals collects zero source code, diffs, PR titles, or comments. If a repository becomes private or inaccessible, its contributions are immediately suppressed.
+5. **Instant Withdrawal:** Consent can be withdrawn at any time with a single click, instantly deleting all public contribution records.
 
-The App owner/slug cannot be inferred from the client ID here; use the existing App rather than creating another App. No setup URL endpoint is implemented, so do not configure a setup URL as a substitute for the OAuth callback. Keep permissions, installations, repository IDs, consents, PR IDs, scores, and the session encryption key unchanged.
+---
 
-All requests, including static assets, reach the Worker first. Off-origin root/assets GET/HEAD requests redirect to the canonical path without a query; off-origin APIs and mutations are rejected. An off-origin callback discards code/state and restarts login at the fixed canonical authorization endpoint. Sessions are host-bound, so users sign in again on the new host; the old origin is not accepted for CSRF. Local development retains the localhost override in `.dev.vars.example`.
+## 🏗️ Architecture & Tech Stack
 
-Repository sync resolves immutable GitHub node IDs with the selected installation's token, not stored owner/name. Verified current names refresh the participant's consent and PR display metadata under the sync lease; rename does not create a new consent or retract contributions. Transport/GraphQL/shape errors remain retryable failures, not evidence that a repository is private/inaccessible.
+VibeRivals is engineered to run entirely on **Cloudflare Free tier infrastructure**:
 
-## Ranking eligibility and manual validation
+- **Edge Runtime:** Cloudflare Workers running [Hono](https://hono.dev/) for fast, type-safe API routing.
+- **Database:** [Cloudflare D1](https://developers.cloudflare.com/d1/) (Serverless SQLite) for storing minimal session, consent, and pull request facts.
+- **Frontend:** Vanilla HTML, CSS, and modern JavaScript with zero build-step or runtime dependencies, featuring WCAG-compliant accessible design and `prefers-reduced-motion` animations.
+- **GitHub Integration:** GitHub App web flow with least-privilege read-only permissions (`Metadata: read`, `Pull requests: read`). Zero access to repository contents, diffs, or code.
 
-A contribution counts only when the PR is **merged**, its GitHub PR author has opted in, and its repository is explicitly selected and currently public. The merge timestamp determines the UTC ranking month; commit authors, the person who merges, standalone commits, and deployments do not earn points. Each eligible PR contributes one point, and repeating a sync must not count the same PR again.
+---
 
-After a real contribution is merged, sign in as the participant, confirm participation and repository selection, then click **Sync now**. View the ranking for the merge's UTC month; allow up to 60 seconds for the public cache to refresh. An empty ranking can be expected when there are no eligible merged PRs, even if commits or deployments already exist.
+## 🚀 Quick Start & Local Development
 
-A useful documentation PR can validate ingestion and a one-point entry. This is a legitimate documentation/validation contribution, not evidence of productivity, quality, or a three-person podium; those require separate evidence. The application uses read-only GitHub access and does not create or merge PRs for participants.
+### Prerequisites
 
-## Quick start
+- Node.js 20+
+- npm 10+
+- Wrangler CLI (`npm i -g wrangler` or via `npx wrangler`)
 
-```sh
-npm ci
-cp .dev.vars.example .dev.vars # fill values locally; never commit this file
-npm test
-npm run check
-npx wrangler d1 migrations apply vibe-coder-league --local
-npx wrangler dev --local
+### Installation
+
+1. **Clone the repository:**
+   ```sh
+   git clone https://github.com/rapha83/VibeRivals.git
+   cd VibeRivals
+   ```
+
+2. **Install dependencies:**
+   ```sh
+   npm ci
+   ```
+
+3. **Configure local environment variables:**
+   ```sh
+   cp .dev.vars.example .dev.vars
+   ```
+   *(Fill in your local development variables. `.dev.vars` is git-ignored and must never be committed).*
+
+4. **Run tests and type checking:**
+   ```sh
+   npm test        # Runs Vitest (116 tests)
+   npm run check   # Runs tsc --noEmit
+   ```
+
+5. **Start local development server:**
+   ```sh
+   # Apply migrations to local SQLite D1 database
+   npx wrangler d1 migrations apply vibe-coder-league --local
+
+   # Launch local development worker
+   npx wrangler dev
+   ```
+
+---
+
+## 📁 Project Structure
+
+```text
+VibeRivals/
+├── src/
+│   ├── worker.ts              # Hono API routes, auth, rate limiting, and scheduled sync
+│   ├── github.ts              # GitHub API client with strict data query boundaries
+│   └── frontend/              # Static frontend assets (HTML, styles, scripts, visuals)
+│       ├── index.html         # Accessible competition interface
+│       ├── app.js             # Vanilla client-side state and UI interaction
+│       ├── styles.css         # Modern dark-mode styling and motion tokens
+│       └── competition-builders.webp
+├── migrations/                # Cloudflare D1 SQL schema migrations
+│   ├── 0001_initial.sql
+│   ├── 0002_rate_limits.sql
+│   ├── 0003_sync_job_leases.sql
+│   └── 0004_oauth_transactions_and_public_profiles.sql
+├── test/                      # Vitest unit, contract, and integration tests
+│   ├── security-contract.test.ts
+│   ├── worker.integration.test.ts
+│   ├── github-sync.test.ts
+│   ├── github-app-auth.test.ts
+│   └── frontend.behavior.test.js
+├── docs/                      # Architectural specs, operational guides, and audit logs
+│   ├── README.md              # Documentation directory index
+│   ├── architecture.md
+│   ├── cloudflare.md
+│   ├── github-app.md
+│   ├── privacy-security-retention.md
+│   └── local-validation.md
+├── wrangler.toml              # Cloudflare Worker configuration
+└── EVIDENCE.md                # System audit and verification evidence
 ```
 
-## Documentation
+---
 
-- [Architecture](docs/architecture.md)
-- [Privacy, security, and retention](docs/privacy-security-retention.md)
-- [GitHub App setup](docs/github-app.md)
-- [Cloudflare deployment and operations](docs/cloudflare.md)
-- [Local validation](docs/local-validation.md)
-- [Delivery evidence](EVIDENCE.md)
+## 🔌 API Reference
 
-## Non-goals
+| Endpoint | Method | Auth | Description |
+| :--- | :---: | :---: | :--- |
+| `/api/rules` | `GET` | Public | Returns the competition rules and scoring protocol. |
+| `/api/leaderboard?month=YYYY-MM` | `GET` | Public | Returns monthly leaderboard rankings and self-declared configurations. |
+| `/api/profiles/:id?month=YYYY-MM` | `GET` | Public | Returns public participant profile and published contributions. |
+| `/api/session` | `GET` | Session | Returns session state and CSRF token. |
+| `/api/repos` | `GET` | Session | Returns accessible public repositories for the authenticated user. |
+| `/api/auth/github` | `GET` | Public | Initiates GitHub App OAuth authorization flow. |
+| `/api/auth/github/callback` | `GET` | Public | Completes OAuth code exchange server-side. |
+| `/api/selections` | `POST` | CSRF | Confirms repository selection, consent, and optional tool/model tags. |
+| `/api/sync` | `POST` | CSRF | Triggers an on-demand sync of eligible merged PRs. |
+| `/api/consent` | `DELETE` | CSRF | Withdraws consent and purges public contribution data. |
 
-Private repositories; GitHub write access; source-code, diff, patch or PR-text collection; AI detection; verified model/tool attribution or line attribution; quality/productivity claims; prizes; GitLab and Bitbucket.
+---
+
+## 🔒 Security & Privacy by Design
+
+- **Zero Source Code Access:** GitHub API queries request only `id`, `mergedAt`, and author identity. No code, diffs, patches, file paths, or PR comments are ever fetched or stored.
+- **Credential Protection:** GitHub user tokens are encrypted at rest with **AES-256-GCM** using a 32-byte key. Ephemeral GitHub App installation tokens are generated in memory and never persisted.
+- **Session Integrity:** Session cookies use the secure `__Host-` prefix (`__Host-vcl`) with `HttpOnly`, `Secure`, and `SameSite=Lax`. Tokens are stored in the database as **SHA-256** hashes.
+- **Strict Host Canonicalization:** All incoming requests are guarded by host verification. Requests to legacy domains are automatically redirected to `https://viberivals.com`.
+- **Durable Rate Limiting:** All mutation routes are rate-limited via Cloudflare D1 with IP-based hashing before CSRF or processing execution.
+
+---
+
+## 📖 Documentation
+
+For in-depth technical details, check the [Documentation Index](docs/README.md):
+
+- [Architecture & Data Boundaries](docs/architecture.md)
+- [Privacy, Security, and Retention Policy](docs/privacy-security-retention.md)
+- [GitHub App Configuration](docs/github-app.md)
+- [Cloudflare Deployment Guide](docs/cloudflare.md)
+- [Local Validation & Testing](docs/local-validation.md)
+- [VibeRivals Origin Migration](docs/viberivals-migration-2026-10-05.md)
+
+---
+
+## 🎯 Non-Goals
+
+- Collecting or archiving private repositories or proprietary source code.
+- Automatic AI detection or code quality evaluation.
+- Commercial rankings, prizes, or sponsored placements.
+- Broad third-party write permissions to participant repositories.

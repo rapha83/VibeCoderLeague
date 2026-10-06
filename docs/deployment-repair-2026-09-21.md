@@ -1,6 +1,9 @@
 # Deployment repair receipt — 2026-09-21
 
-**Scope:** controlled repair of the existing Cloudflare Worker `vibecoderleague` at `https://vibecoderleague.grumpzillax.workers.dev`.
+> [!NOTE]
+> **Historical Record:** This receipt documents an earlier deployment stage on the legacy `workers.dev` staging route. The canonical production origin was migrated to **https://viberivals.com** on 2026-10-05 (see [viberivals-migration-2026-10-05.md](viberivals-migration-2026-10-05.md)).
+
+**Scope:** controlled repair of the existing Cloudflare Worker `vibecoderleague` (legacy route: `https://vibecoderleague.grumpzillax.workers.dev`).
 
 **Safety:** This receipt contains no credentials, cookies, OAuth state, tokens, client identifiers, private keys, or secret values. No old Worker name, unrelated D1 database, consent, synchronization, browser authentication, OAuth callback, or cron schedule was used or changed. The existing `SESSION_ENCRYPTION_KEY_BASE64` secret was neither read nor overwritten.
 

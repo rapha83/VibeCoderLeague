@@ -1,5 +1,8 @@
 # Manual post-consent sync activation receipt — 2026-09-21
 
+> [!NOTE]
+> **Historical Record:** This receipt documents an earlier deployment stage on the legacy `workers.dev` staging route. The canonical production origin was migrated to **https://viberivals.com** on 2026-10-05 (see [viberivals-migration-2026-10-05.md](viberivals-migration-2026-10-05.md)).
+
 ## Scope and safety boundary
 
 This release adds the bounded, user-triggered collection path for the existing Worker **`vibecoderleague`**. It does not add a cron trigger or change `wrangler.toml`, the D1 binding/schema, the public origin, GitHub App permissions/settings, or any Worker secret. It does not create a production session, consent, selection, or sync any owner data.

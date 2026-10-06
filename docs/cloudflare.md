@@ -1,55 +1,66 @@
-# Cloudflare Free deployment and operations
+# Cloudflare Deployment and Operations
 
-The repository targets the existing Cloudflare Worker `vibecoderleague` in the confirmed account, whose public origin is exactly `https://vibecoderleague.grumpzillax.workers.dev`. It is bound to one dedicated D1 database, `vibe-coder-league` (`a5fcb38c-026a-4bd3-9f93-a2822cf067b4`). The similarly named Worker and D1 resources must not be substituted or recreated.
+The repository targets the Cloudflare Worker `vibecoderleague` attached to the canonical custom domain **`https://viberivals.com`**. It is bound to one dedicated D1 database, `vibe-coder-league` (`a5fcb38c-026a-4bd3-9f93-a2822cf067b4`). Any requests directed to the legacy `workers.dev` staging route are automatically intercepted and redirected to the canonical origin.
 
-## Free-plan target
+## Free-Plan Architecture
 
-Use the included single Worker for public API/UI and scheduled sync, with D1 for the small derived dataset. The configuration declares static assets, one D1 binding (`DB`), `workers_dev = true`, and `PUBLIC_ORIGIN` as the exact production URL with no trailing slash. It declares **no cron trigger**. Cron remains deliberately disabled until an end-to-end GitHub App journey has direct live evidence. Do not add paid resources, custom domains, DNS routes, or other D1 databases.
+The application runs on Cloudflare Free infrastructure using:
+- **Cloudflare Workers:** Serves the Hono JSON API (`/api/*`), static asset handling, and scheduled sync execution.
+- **Cloudflare D1:** Serverless SQLite database for sessions, consents, and pull request aggregations.
+- **Cloudflare Static Assets:** Bound via `ASSETS` to serve frontend HTML, CSS, JS, and media directly from `./src/frontend`.
 
-Configure the GitHub entries only through Cloudflare Worker secret storage, never committed files:
+Configuration in `wrangler.toml` declares:
+- `name = "vibecoderleague"`
+- `workers_dev = true`
+- `PUBLIC_ORIGIN = "https://viberivals.com"`
+- Dedicated D1 database binding `DB`
+- Assets binding `ASSETS` with `run_worker_first = true`
+- **No cron triggers** enabled by default until an end-to-end authorization and sync journey is verified.
 
-- `GITHUB_APP_ID`
-- `GITHUB_APP_PRIVATE_KEY`
-- `GITHUB_APP_CLIENT_ID`
-- `GITHUB_APP_CLIENT_SECRET`
-- `SESSION_ENCRYPTION_KEY_BASE64`
+### Secret Management
 
-`PUBLIC_ORIGIN` is a non-secret Worker variable. Do not replace an existing `SESSION_ENCRYPTION_KEY_BASE64` while configuring the other entries.
+Configure production secrets exclusively through Cloudflare Worker Secret storage (`wrangler secret put`), never in committed repository files:
 
-## workers.dev activation
+- `GITHUB_APP_ID`: Numeric App ID or client identifier.
+- `GITHUB_APP_PRIVATE_KEY`: PKCS#8 PEM private key for signing installation tokens.
+- `GITHUB_APP_CLIENT_ID`: GitHub App OAuth client ID.
+- `GITHUB_APP_CLIENT_SECRET`: GitHub App OAuth client secret.
+- `SESSION_ENCRYPTION_KEY_BASE64`: 32-byte Base64-encoded key for AES-256-GCM session token encryption.
 
-The Worker origin and GitHub App user-authorization callback are:
+`PUBLIC_ORIGIN` is a non-secret Worker environment variable (`https://viberivals.com`).
+
+## Canonical Origin and Routing
+
+The canonical production URLs are:
 
 ```text
-https://vibecoderleague.grumpzillax.workers.dev
-https://vibecoderleague.grumpzillax.workers.dev/api/auth/github/callback
+Homepage: https://viberivals.com
+OAuth Callback: https://viberivals.com/api/auth/github/callback
 ```
 
-The browser flow uses the GitHub App's client ID and client secret, not credentials from a separate OAuth App, an App ID, private key, or installation token.
+### Legacy Subdomain Redirection
 
-## Controlled activation sequence
+The Worker enforces host-level canonicalization via `canonicalResponse`:
+- Safe GET/HEAD requests to legacy `*.workers.dev` roots and static assets return HTTP `308 Permanent Redirect` to `https://viberivals.com`.
+- OAuth callback requests hitting legacy origins return HTTP `303 See Other` redirecting to the canonical `/api/auth/github` route (discarding obsolete state parameters).
+- Off-origin API mutations return HTTP `421 Misdirected Request` to protect against cross-origin confusion.
 
-1. Confirm the selected configuration resolves to Worker `vibecoderleague`, D1 `vibe-coder-league` ID `a5fcb38c-026a-4bd3-9f93-a2822cf067b4`, and no cron declaration.
-2. Validate and push the exact candidate commit before production mutation. Inspect any automation to ensure the push does not deploy a different Worker.
-3. Inspect migration status, then apply migrations `0001` through `0004` only to the dedicated D1 database:
+The browser authentication flow uses the GitHub App's client ID and client secret, not credentials from a separate OAuth App, private keys, or installation tokens.
+
+## Controlled Deployment Sequence
+
+1. **Verify Resources:** Ensure the deployment configuration targets Worker `vibecoderleague`, D1 database `vibe-coder-league` (`a5fcb38c-026a-4bd3-9f93-a2822cf067b4`), and `PUBLIC_ORIGIN = "https://viberivals.com"`.
+2. **Apply Database Migrations:** Apply pending D1 migrations using Wrangler:
    ```sh
    npx wrangler d1 migrations apply vibe-coder-league --remote
    ```
-4. Set `PUBLIC_ORIGIN` to the exact origin and set the four GitHub App entries as Worker secrets only when their values are available through an approved secure source. Do not read, print, or replace `SESSION_ENCRYPTION_KEY_BASE64`.
-5. Deploy the exact validated source commit to `vibecoderleague` with no cron configuration. Verify the static root, assets, `/api/rules`, `/api/leaderboard`, `/api/session`, and OAuth initiation without following redirects.
-6. Commit and push a sanitized repair receipt afterward. Its SHA is documentation-only and is not the deployed source SHA.
+3. **Configure Worker Secrets:** Populate required GitHub App secrets and session encryption key via `wrangler secret put`.
+4. **Deploy Worker:**
+   ```sh
+   npx wrangler deploy
+   ```
+5. **Verify Endpoints:** Verify that `https://viberivals.com/` returns HTTP 200, `/api/rules` and `/api/leaderboard` return valid JSON, and OAuth initiation redirects cleanly to GitHub.
 
-Do not follow OAuth redirects, create consent, sync repositories, or enable cron in this activation repair.
+## Sync Continuation and Work Budget
 
-## Migration and rollback
-
-- Record exact commit, schema migration, D1 target, and recovery point before applying a migration.
-- Prefer additive, backward-compatible migrations. Do not manually edit production tables to make a migration pass.
-- If deployment fails, preserve the last known good Worker. Code rollback is normally safe; D1 schema rollback requires an owner-approved recovery plan.
-- To disable an activated Worker safely, remove the cron trigger first (or redeploy the reviewed no-cron configuration), then disable/delete its secrets or Worker deployment as appropriate. Worker rollback does not undo D1 migrations.
-
-## Sync continuation and failure policy
-
-Each scheduled invocation has one sequential work budget of 20 units. It charges before every installation-token mint and GitHub GraphQL page attempt, processes a deterministic bounded cohort, saves its D1 cursor, and releases its lease for partial/retryable work. Stable PR IDs make retries idempotent. A completed traversal removes stale records; private repositories retract records, and GitHub ambiguity becomes `unknown` visibility and is excluded from public output until a later successful sync.
-
-Inspect last success, cursor/status, page count, duration, rate-limit state, and error category—never tokens or raw payloads. On interruption, let the next cron continue from the committed cursor. Consent withdrawal remains authoritative over any concurrent sync.
+Each scheduled invocation operates under a strict work budget of 20 units. It processes a deterministic cohort of opted-in public repositories, acquires leases in D1, and saves pagination cursors for resilient, resumable sync. Replays are idempotent based on immutable GitHub Pull Request IDs.

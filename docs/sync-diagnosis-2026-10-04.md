@@ -1,5 +1,8 @@
 # Sync diagnosis — 2026-10-04
 
+> [!NOTE]
+> **Historical Record:** This diagnosis documents an investigation conducted prior to the origin migration to **https://viberivals.com** on 2026-10-05 (see [viberivals-migration-2026-10-05.md](viberivals-migration-2026-10-05.md)).
+
 ## Candidate and scope
 
 Local, uncommitted candidate on `feat/public-opt-in-leaderboard`, base
