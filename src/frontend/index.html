@@ -114,22 +114,24 @@
       </section>
 
       <section id="participate" class="section" aria-labelledby="participation-title">
-        <div class="shell two-column">
-          <div>
+        <div class="shell participation-layout">
+          <div class="participation-heading">
             <p class="eyebrow">Your choice</p>
             <h2 id="participation-title">Join the vibe coding race.</h2>
+          </div>
+          <div>
             <ol class="journey-steps" aria-label="Participation steps">
               <li><strong>Connect GitHub</strong><span>Review your eligible public repositories.</span></li>
               <li><strong>Choose &amp; consent</strong><span>Nothing is enrolled automatically.</span></li>
               <li><strong>Sync your PRs</strong><span>Publish eligible merged PRs. Withdraw any time.</span></li>
             </ol>
-            <p>GitHub connection lets this site show the eligible public repositories associated with your session. Nothing is selected until you choose it and confirm consent.</p>
-            <p class="quiet">AI coding tools and models are optional self-descriptions. They are not verified and do not affect points.</p>
           </div>
           <div class="participation-panel">
             <p class="eyebrow">Participation / Your controls</p>
+            <p class="field-help">GitHub connection lets this site show the eligible public repositories associated with your session. Nothing is selected until you choose it and confirm consent.</p>
             <p id="session-status" class="status-text" role="status" aria-live="polite">Checking session…</p>
             <div id="connect-action"></div>
+            <p class="field-help">AI coding tools and models are optional self-descriptions. They are not verified and do not affect points.</p>
             <form id="participation-form" novalidate hidden>
               <fieldset>
                 <legend>Select an eligible public repository</legend>
