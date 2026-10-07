@@ -98,12 +98,12 @@
         </div>
       </section>
 
-      <section class="section section-tint" aria-labelledby="rules-title">
+      <section id="rules" class="section section-tint race-briefing" aria-labelledby="rules-title">
         <div class="shell two-column">
           <div>
             <p class="eyebrow">How it works</p>
             <h2 id="rules-title">Rules of the race</h2>
-            <p>Read the current rules before choosing to participate. The information below comes from the service.</p>
+            <p>Know what counts before you join. These are the current rules from the service.</p>
           </div>
           <div class="rules-panel">
             <p id="rules-status" class="status-text" role="status" aria-live="polite">Loading rules…</p>
@@ -127,6 +127,7 @@
             <p class="quiet">AI coding tools and models are optional self-descriptions. They are not verified and do not affect points.</p>
           </div>
           <div class="participation-panel">
+            <p class="eyebrow">Participation / Your controls</p>
             <p id="session-status" class="status-text" role="status" aria-live="polite">Checking session…</p>
             <div id="connect-action"></div>
             <form id="participation-form" novalidate hidden>
@@ -171,6 +172,7 @@
       </section>
     </main>
 
-    <footer class="site-footer"><div class="shell">VibeRivals · The vibe coding competition · Public participation is opt-in.</div></footer>
+    <noscript><p class="shell field-help">JavaScript is needed to load live rankings, rules and participation controls. Public participation is opt-in; no repository is enrolled by visiting this page.</p></noscript>
+    <footer class="site-footer"><div class="shell footer-content"><div><p class="footer-brand">Vibe<span>Rivals</span></p><p>The vibe coding competition.<br />Public participation is opt-in.</p></div><nav aria-label="Footer navigation"><a href="#leaderboard">Monthly ranking</a><a href="#rules">Rules of the race</a><a href="#participate">Participation &amp; controls</a></nav></div></footer>
   </body>
 </html>

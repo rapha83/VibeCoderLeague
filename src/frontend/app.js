@@ -82,7 +82,27 @@
     return data;
   }
 
-  function row(data, cells, className = "", profileId = null, month = null) { const tr = document.createElement("tr"); if (className) tr.className = className; cells.forEach((value, index) => { const td = document.createElement("td"); if (index === 1 && profileId) { const link = document.createElement("a"); link.href = profilePath(profileId, month); link.textContent = value; td.append(link); } else td.textContent = value; tr.append(td); }); data.append(tr); }
+  // GitHub names cannot contain commas: validate the entire historical
+  // GROUP_CONCAT field before linking. Ambiguous payloads remain plain text.
+  function renderRepositories(container, value) {
+    const text = asText(value);
+    const names = typeof value === "string" ? value.split(",") : [];
+    const valid = name => {
+      const parts = name.split("/");
+      return parts.length === 2 && !/\s/.test(name) && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(parts[0]) &&
+        !parts[0].includes("--") && /^[A-Za-z0-9_.-]{1,100}$/.test(parts[1]) && ![".", ".."].includes(parts[1]);
+    };
+    if (!names.length || !names.every(valid)) { container.textContent = text; return; }
+    names.forEach((name, index) => {
+      if (index) container.append(document.createTextNode(", "));
+      const [owner, repository] = name.split("/");
+      const link = document.createElement("a"); link.className = "repository-link";
+      link.href = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
+      link.textContent = name; link.setAttribute("aria-label", `View ${name} on GitHub`);
+      container.append(link);
+    });
+  }
+  function row(data, cells, className = "", profileId = null, month = null) { const tr = document.createElement("tr"); if (className) tr.className = className; cells.forEach((value, index) => { const td = document.createElement("td"); if (index === 1 && profileId) { const link = document.createElement("a"); link.href = profilePath(profileId, month); link.textContent = value; td.append(link); } else if (index === 2 && className === "leaderboard-entry") renderRepositories(td, value); else td.textContent = value; tr.append(td); }); data.append(tr); }
   function itemList(value) { return Array.isArray(value) ? value : []; }
   function leaderboardRows(payload) { const source = asObject(payload); return Array.isArray(payload) ? payload : itemList(source.rows || source.entries || source.leaderboard); }
 
@@ -100,7 +120,7 @@
       const rank = document.createElement("p"); rank.className = "podium-rank"; rank.textContent = `#${asText(entry.rank, String(index + 1))} / ${["Gold", "Silver", "Bronze"][index]}`;
       const name = document.createElement(typeof entry.profileId === "string" ? "a" : "span"); name.className = "podium-name"; name.textContent = asText(entry.displayName);
       if (typeof entry.profileId === "string") name.href = profilePath(entry.profileId, month);
-      const repository = document.createElement("p"); repository.className = "podium-repository"; repository.textContent = asText(entry.repository);
+      const repository = document.createElement("p"); repository.className = "podium-repository"; renderRepositories(repository, entry.repository);
       const count = document.createElement("p"); count.className = "podium-count";
       const score = document.createElement("strong"); score.textContent = asText(entry.score);
       const label = document.createElement("span"); label.textContent = "merged PRs"; count.append(score, label);
