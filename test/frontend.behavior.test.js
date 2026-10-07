@@ -140,6 +140,28 @@ describe("public leaderboard frontend", () => {
     expect(styles).toContain(".podium-configuration dd { margin:0; overflow-wrap:anywhere; }"); expect(styles).toContain("min-width:52rem"); expect(styles).toContain(".podium { grid-template-columns:1fr;"); expect(styles).toContain("overflow-y:auto");
   });
 
+  it.each([
+    ["rapha83/VibeRivals", ["rapha83/VibeRivals"]],
+    ["octo/one,other-owner/repo.two", ["octo/one", "other-owner/repo.two"]],
+    ["a/b, c/d", []], ["a/b,bad", []], ["a/b,", []],
+    ["https://github.com/a/b", []], ["//github.com/a/b", []],
+    ["javascript:alert(1)", []], ["a/..", []], ["a--b/repo", []],
+    ["a/b?x=1", []], ["a/b#fragment", []], ["a/%2F", []], ["a/b\n", []], ["a\n/b", []],
+    ["<img src=x onerror=alert(1)>/repo", []], ["a/repo&evil", []],
+    [null, []], [42, []], [{ repository: "a/b" }, []],
+  ])("links only unambiguous GitHub names: %j", async (repository, names) => {
+    const page = boot({ handler: path => path.startsWith("/api/leaderboard") ? json({ rows: [{ displayName: "Rival", repository, score: 4 }] }) : anonymous(path) }); await tick();
+    for (const container of [page.document.querySelector(".leaderboard-entry").children[2], page.document.querySelector(".podium-repository")]) {
+      const links = [...container.querySelectorAll("a")];
+      expect(links.map(link => link.getAttribute("href"))).toEqual(names.map(name => `https://github.com/${name}`));
+      links.forEach((link, index) => { expect(link.textContent).toBe(names[index]); expect(link.getAttribute("aria-label")).toBe(`View ${names[index]} on GitHub`); expect(link.hasAttribute("target")).toBe(false); link.focus(); expect(page.document.activeElement).toBe(link); });
+      expect(container.querySelector("img,script")).toBeNull();
+      if (typeof repository === "string") expect(container.textContent).toBe(names.length ? names.join(", ") : repository);
+    }
+    expect(page.calls.every(call => call.path.startsWith("/api/"))).toBe(true);
+    expect(page.document.querySelector(".leaderboard-entry").lastElementChild.textContent).toBe("4");
+  });
+
   it.each([0, 1, 2, 3, 5])("renders %i API rows without placeholders, reordering or count changes", async count => {
     // Deliberately not alphabetical: the frontend must preserve server tie-breaking.
     const rows = Array.from({ length: count }, (_, index) => ({ rank: index + 1, profileId: `p/${index}`, displayName: ["Zed", "Ada", "Bea", "Cam", "Dee"][index], repository: `owner/repo-${index}`, score: index === 0 ? 0 : 7 }));
