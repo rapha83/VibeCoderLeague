@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="760" viewBox="0 0 1440 760" fill="none">
+  <!-- Original VibeRivals code-lane artwork. No external references or text. -->
+  <g stroke="#66e7f4" stroke-width="2">
+    <path d="M-80 80H240L420 260H760L980 480H1520"/>
+    <path d="M-80 106H228L408 286H748L968 506H1520" opacity=".45"/>
+    <path d="M-80 560H180L350 390H590"/>
+    <path d="M70 620H220L390 450H610" opacity=".45"/>
+    <circle cx="420" cy="260" r="6"/><circle cx="350" cy="390" r="6"/>
+    <path d="m1050 180-28 28 28 28m46-56 28 28-28 28"/>
+  </g>
+  <g stroke="#b5a1ff" stroke-width="2">
+    <path d="M1520 60H1250L1050 260H900L700 460H-80"/>
+    <path d="M1520 86H1262L1062 286H912L712 486H-80" opacity=".45"/>
+    <path d="M1520 600H1250L1100 450H930"/>
+    <path d="M1370 660H1220L1070 510H900" opacity=".45"/>
+    <circle cx="1050" cy="260" r="6"/><circle cx="1100" cy="450" r="6"/>
+    <path d="m190 200-28 28 28 28m46-56 28 28-28 28"/>
+  </g>
+</svg>
